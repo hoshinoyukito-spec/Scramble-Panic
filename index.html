@@ -53,7 +53,7 @@
       text-align: center;
     }
     /* コントロール（fixed でレイアウトに影響しない） */
-    #joystick-wrap, #boost-wrap {
+    #joystick-wrap {
       position: fixed;
       touch-action: none;
       z-index: 100;
@@ -99,26 +99,8 @@
       transform: translate(-50%,-50%);
       pointer-events: none;
     }
-    #boost-btn {
-      width: 68px; height: 68px;
-      border-radius: 50%;
-      border: 2px solid rgba(180,180,180,0.7);
-      background: rgba(255,255,255,0.06);
-      color: #bbb;
-      font-size: 11px;
-      font-weight: bold;
-      font-family: 'Courier New', monospace;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      user-select: none;
-      -webkit-user-select: none;
-      cursor: pointer;
-    }
-    #boost-btn.pressed { background: rgba(255,255,255,0.3); color:#fff; border-color:#fff; }
     /* 設定モード時のハイライト */
     .ctrl-edit #joystick-base { border-color: #ff0 !important; border-style: dashed !important; }
-    .ctrl-edit #boost-btn     { border-color: #ff0 !important; border-style: dashed !important; }
     #settings-btn.active { color: #ff0; border-color: #ff0; }
     @media (pointer: coarse) {
       body { justify-content: flex-start; padding-top: 6px; }
@@ -260,7 +242,6 @@
       <span>SCORE: <span id="score">0</span></span>
       <span>WAVE: <span id="level">1</span></span>
       <span id="lives-hearts">♥♥♥</span>
-      <span>POWER: <span id="power-hud">0%</span></span>
       <button id="menu-btn">MENU</button>
     </div>
   </div>
@@ -300,21 +281,17 @@
       <div class="help-section">
         <h3>■ 操作（PC）</h3>
         <p>移動：<span>↑↓←→ または WASD</span><br>
-        BOOST発動：<span>スペースキー</span>（パワーが100%のとき）</p>
+        </p>
       </div>
       <div class="help-section">
         <h3>■ 操作（スマホ）</h3>
         <p>移動：画面左の<span>ジョイスティック</span>をドラッグ（斜め移動対応）<br>
-        BOOST発動：画面右の<span>BOOSTボタン</span></p>
-      </div>
-      <div class="help-section">
-        <h3>■ BOOST</h3>
-        <p>パワーが<span>100%</span>になったら発動できる。<span>3秒間</span>人を弾き飛ばせる（＋20点）。ぶつかるとパワーが0にリセット。</p>
+        </p>
       </div>
       <div class="help-section">
         <h3>■ ボタン位置・サイズ変更（スマホ）</h3>
         <p>画面右上の<span>⚙ボタン</span>を押すと設定モードになる。<br>
-        ・ジョイスティック／BOOSTを<span>ドラッグ</span>して好きな位置に移動<br>
+        ・ジョイスティックを<span>ドラッグ</span>して好きな位置に移動<br>
         ・左上の<span>＋／－</span>でボタンのサイズを変更<br>
         ・<span>✓ボタン</span>を押すと位置・サイズが保存される</p>
       </div>
@@ -323,9 +300,6 @@
     <!-- キャンバス上に重ねるコントロール -->
     <div id="joystick-wrap">
       <div id="joystick-base"><div id="joystick-thumb"></div></div>
-    </div>
-    <div id="boost-wrap">
-      <div id="boost-btn">BOOST</div>
     </div>
     <div id="settings-btn">⚙</div>
     <!-- 設定モード：サイズ調整 -->
@@ -359,7 +333,6 @@ const titleBtns   = document.getElementById('title-btns');
 const scoreEl     = document.getElementById('score');
 const levelEl     = document.getElementById('level');
 const livesEl     = document.getElementById('lives');
-const powerHudEl  = document.getElementById('power-hud');
 
 const START_X = W / 2;
 const START_Y = H - 44;
@@ -405,9 +378,6 @@ let keys = {};
 let tick = 0;
 let spawnTimer = 0;
 let waveStartTick = 0; // ウェーブ開始時のtick
-let power = 0;        // 0〜100
-let powered = false;  // ブーストモード中
-let poweredTimer = 0;
 
 let flash = { text: '', sub: '', timer: 0, color: '#fff' };
 function showFlash(text, sub, frames) {
@@ -588,7 +558,7 @@ function drawPlayer(x, y, w, h) {
 
   // 常時グロー（自分を目立たせる）
   ctx.shadowColor = '#fff';
-  ctx.shadowBlur  = powered ? 20 + Math.sin(tick*0.3)*6 : 8;
+  ctx.shadowBlur  = 8;
 
   ctx.fillStyle = '#fff';
   ctx.fillRect(x - w*0.3,  y - h*0.57, w*0.6,  h*0.07);
@@ -715,8 +685,6 @@ function resetPlayer() {
   particles = [];
   spawnTimer = 0;
   waveStartTick = tick;
-  power = 0; powered = false; poweredTimer = 0;
-  powerHudEl.textContent = '0%';
   randomizeGoal();
   initPatrols();
 }
@@ -729,28 +697,6 @@ function update() {
   }
   tick++;
   if (flash.timer > 0) flash.timer--;
-
-  // Power charges over time
-  if (!powered) {
-    power = Math.min(100, power + 0.12);
-    powerHudEl.textContent = Math.floor(power) + '%';
-  }
-
-  // Boost activation (Space or 'z')
-  if ((keys[' '] || keys['z']) && power >= 100 && !powered) {
-    powered = true;
-    poweredTimer = 180; // 3秒
-    power = 0;
-    powerHudEl.textContent = 'BOOST!';
-    showFlash('BOOST!!', '弾き飛ばせ！', 40);
-  }
-  if (powered) {
-    poweredTimer--;
-    if (poweredTimer <= 0) {
-      powered = false;
-      powerHudEl.textContent = '0%';
-    }
-  }
 
   // Player movement
   const spd = 3.2;
@@ -820,15 +766,7 @@ function update() {
     // 全歩行者に当たり判定
     if (Math.abs(p.x - player.x) < (p.w + player.w)*0.42 &&
         Math.abs(p.y - player.y) < (p.h + player.h)*0.42) {
-      if (powered) {
-        const dx = p.x - player.x, dy = p.y - player.y;
-        const len = Math.sqrt(dx*dx + dy*dy) || 1;
-        p.vx = (dx/len) * 8;
-        p.vy = (dy/len) * 8;
-        spawnExplosion(p.x, p.y);
-        score += 20;
-        scoreEl.textContent = score;
-      } else if (player.invincible <= 0) {
+      if (player.invincible <= 0) {
         hitPlayer();
         if (!p.patrol) pedestrians.splice(i, 1);
       }
@@ -847,8 +785,6 @@ function hitPlayer() {
   lives--;
   updateLivesDisplay();
   spawnExplosion(player.x, player.y);
-  power = 0; powered = false; poweredTimer = 0;
-  powerHudEl.textContent = '0%';
   if (lives <= 0) {
     updateBest();
     retryLevel = level;
@@ -880,13 +816,7 @@ function draw() {
     }
 
     if (player.invincible <= 0 || Math.floor(player.invincible/6)%2 === 0) {
-      if (powered) {
-        // ブースト中は光る
-        ctx.shadowColor = '#fff';
-        ctx.shadowBlur = 18 + Math.sin(tick*0.3)*6;
-      }
       drawPlayer(player.x, player.y, player.w, player.h);
-      ctx.shadowBlur = 0;
     }
 
     for (const p of particles) {
@@ -932,7 +862,6 @@ function setCtrlVisible(visible) {
   const isTouch = window.matchMedia('(pointer: coarse)').matches;
   const d = (visible && isTouch) ? 'flex' : 'none';
   joystickWrap.style.display = d;
-  boostWrap.style.display    = d;
 }
 
 function showTitle() {
@@ -985,10 +914,8 @@ canvas.addEventListener('click', () => { if (state !== 'playing' && state !== 'l
 
 // --- Touch controls (overlaid on canvas) ---
 const joystickWrap  = document.getElementById('joystick-wrap');
-const boostWrap     = document.getElementById('boost-wrap');
 const joystickBase  = document.getElementById('joystick-base');
 const joystickThumb = document.getElementById('joystick-thumb');
-const boostBtn      = document.getElementById('boost-btn');
 const settingsBtn   = document.getElementById('settings-btn');
 const gameWrap      = document.getElementById('game-wrap');
 const JR = 50;
@@ -996,8 +923,7 @@ let editMode = false;
 
 // デフォルト位置（キャンバス表示サイズに対する割合）
 const DEFAULT_POS = {
-  joystick: { x: 0.15, y: 1.12 },
-  boost:    { x: 0.85, y: 1.12 },
+  joystick: { x: 0.78, y: 1.12 },
 };
 
 function loadCtrlPos() {
@@ -1013,11 +939,9 @@ function saveCtrlPos(pos) {
 function applyCtrlPos() {
   const pos = loadCtrlPos();
   const rect = canvas.getBoundingClientRect();
-  const js = 50 * ctrlScale, bs = 34 * ctrlScale;
+  const js = 50 * ctrlScale;
   joystickWrap.style.left = (rect.left + pos.joystick.x * rect.width  - js) + 'px';
   joystickWrap.style.top  = (rect.top  + pos.joystick.y * rect.height - js) + 'px';
-  boostWrap.style.left    = (rect.left + pos.boost.x    * rect.width  - bs) + 'px';
-  boostWrap.style.top     = (rect.top  + pos.boost.y    * rect.height - bs) + 'px';
 }
 
 // ジョイスティック操作
@@ -1054,13 +978,6 @@ joystickBase.addEventListener('touchmove',   e => { if (!editMode) { e.preventDe
 joystickBase.addEventListener('touchend',    e => { if (!editMode) { e.preventDefault(); resetJoystick(); } }, { passive: false });
 joystickBase.addEventListener('touchcancel', ()  => { if (!editMode) resetJoystick(); });
 
-boostBtn.addEventListener('touchstart', e => {
-  if (editMode) return;
-  e.preventDefault(); keys[' '] = true; boostBtn.classList.add('pressed');
-  if (state !== 'playing' && state !== 'levelclear') startGame();
-}, { passive: false });
-boostBtn.addEventListener('touchend',    e => { if (!editMode) { e.preventDefault(); keys[' '] = false; boostBtn.classList.remove('pressed'); } }, { passive: false });
-boostBtn.addEventListener('touchcancel', ()  => { keys[' '] = false; boostBtn.classList.remove('pressed'); });
 
 // ボタン位置変更（ドラッグ）
 function makeDraggable(wrap, posKey) {
@@ -1094,7 +1011,6 @@ function makeDraggable(wrap, posKey) {
   }, { passive: false });
 }
 makeDraggable(joystickWrap, 'joystick');
-makeDraggable(boostWrap,    'boost');
 
 // サイズ調整
 const ctrlSizeUI = document.getElementById('ctrl-size-ui');
@@ -1104,9 +1020,6 @@ function applyCtrlScale() {
   const s = ctrlScale;
   joystickBase.style.width  = (100 * s) + 'px';
   joystickBase.style.height = (100 * s) + 'px';
-  boostBtn.style.width  = (68 * s) + 'px';
-  boostBtn.style.height = (68 * s) + 'px';
-  boostBtn.style.fontSize = (11 * s) + 'px';
   document.getElementById('size-label').textContent = Math.round(s * 100) + '%';
   applyCtrlPos();
 }
