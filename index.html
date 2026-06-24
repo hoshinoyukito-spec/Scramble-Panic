@@ -43,21 +43,62 @@
       letter-spacing: 1px;
       text-align: center;
     }
-    #touch-controls {
+    /* オーバーレイコントロール（キャンバス上に重ねる） */
+    #joystick-wrap, #boost-wrap {
+      position: absolute;
+      touch-action: none;
+      z-index: 10;
       display: none;
-      flex-direction: column;
-      align-items: center;
-      gap: 4px;
-      margin-top: 10px;
     }
-    .touch-row { display: flex; gap: 4px; align-items: center; }
-    .touch-btn {
-      width: 50px; height: 50px;
+    #settings-btn {
+      position: absolute;
+      top: 6px; right: 6px;
+      width: 32px; height: 32px;
+      border-radius: 50%;
+      border: 1px solid #555;
+      background: rgba(0,0,0,0.5);
+      color: #888;
+      font-size: 16px;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 20;
+      cursor: pointer;
+      user-select: none;
+    }
+    #joystick-base {
+      width: 100px; height: 100px;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.6);
+      background: rgba(255,255,255,0.07);
+      position: relative;
+    }
+    #joystick-base::before, #joystick-base::after {
+      content: '';
+      position: absolute;
+      background: rgba(255,255,255,0.12);
+    }
+    #joystick-base::before { left:50%; top:10%; width:1px; height:80%; transform:translateX(-50%); }
+    #joystick-base::after  { top:50%; left:10%; height:1px; width:80%; transform:translateY(-50%); }
+    #joystick-thumb {
+      width: 42px; height: 42px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.45);
       border: 2px solid #fff;
-      border-radius: 8px;
-      background: rgba(255,255,255,0.08);
-      color: #fff;
-      font-size: 18px;
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%,-50%);
+      pointer-events: none;
+    }
+    #boost-btn {
+      width: 68px; height: 68px;
+      border-radius: 50%;
+      border: 2px solid rgba(180,180,180,0.7);
+      background: rgba(255,255,255,0.06);
+      color: #bbb;
+      font-size: 11px;
+      font-weight: bold;
+      font-family: 'Courier New', monospace;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -65,17 +106,13 @@
       -webkit-user-select: none;
       cursor: pointer;
     }
-    .touch-btn:active, .touch-btn.pressed { background: rgba(255,255,255,0.35); }
-    .touch-gap { width: 50px; height: 50px; }
-    #boost-btn {
-      font-size: 10px;
-      font-weight: bold;
-      border-color: #aaa;
-      color: #aaa;
-      background: rgba(255,255,255,0.05);
-    }
+    #boost-btn.pressed { background: rgba(255,255,255,0.3); color:#fff; border-color:#fff; }
+    /* 設定モード時のハイライト */
+    .ctrl-edit #joystick-base { border-color: #ff0 !important; border-style: dashed !important; }
+    .ctrl-edit #boost-btn     { border-color: #ff0 !important; border-style: dashed !important; }
+    #settings-btn.active { color: #ff0; border-color: #ff0; }
     @media (pointer: coarse) {
-      #touch-controls { display: flex; }
+      #joystick-wrap, #boost-wrap, #settings-btn { display: flex; }
       #message { display: none; }
     }
     #overlay {
@@ -138,23 +175,14 @@
       </div>
       <p class="start-msg" id="op">TAP OR PRESS SPACE</p>
     </div>
-  </div>
-  <div id="touch-controls">
-    <div class="touch-row">
-      <div class="touch-gap"></div>
-      <div class="touch-btn" id="up-btn">▲</div>
-      <div class="touch-gap"></div>
+    <!-- キャンバス上に重ねるコントロール -->
+    <div id="joystick-wrap">
+      <div id="joystick-base"><div id="joystick-thumb"></div></div>
     </div>
-    <div class="touch-row">
-      <div class="touch-btn" id="left-btn">◀</div>
-      <div class="touch-btn" id="boost-btn">BOOST</div>
-      <div class="touch-btn" id="right-btn">▶</div>
+    <div id="boost-wrap">
+      <div id="boost-btn">BOOST</div>
     </div>
-    <div class="touch-row">
-      <div class="touch-gap"></div>
-      <div class="touch-btn" id="down-btn">▼</div>
-      <div class="touch-gap"></div>
-    </div>
+    <div id="settings-btn">⚙</div>
   </div>
   <div id="message">←→↑↓ / WASD で移動 &nbsp;|&nbsp; SPACE でパワー発動 &nbsp;|&nbsp; 矢印の方向にあるゴールを目指せ！</div>
 
@@ -724,21 +752,132 @@ function startGame() {
 overlay.addEventListener('click', startGame);
 canvas.addEventListener('click', () => { if (state !== 'playing' && state !== 'levelclear') startGame(); });
 
-function addTouchBtn(id, key) {
-  const btn = document.getElementById(id);
-  if (!btn) return;
-  btn.addEventListener('touchstart', e => {
-    e.preventDefault(); keys[key] = true; btn.classList.add('pressed');
-    if (state !== 'playing' && state !== 'levelclear') startGame();
-  }, { passive: false });
-  btn.addEventListener('touchend',    e => { e.preventDefault(); keys[key] = false; btn.classList.remove('pressed'); }, { passive: false });
-  btn.addEventListener('touchcancel', ()=> { keys[key] = false; btn.classList.remove('pressed'); });
+// --- Touch controls (overlaid on canvas) ---
+const joystickWrap  = document.getElementById('joystick-wrap');
+const boostWrap     = document.getElementById('boost-wrap');
+const joystickBase  = document.getElementById('joystick-base');
+const joystickThumb = document.getElementById('joystick-thumb');
+const boostBtn      = document.getElementById('boost-btn');
+const settingsBtn   = document.getElementById('settings-btn');
+const gameWrap      = document.getElementById('game-wrap');
+const JR = 50;
+let editMode = false;
+
+// デフォルト位置（キャンバス表示サイズに対する割合）
+const DEFAULT_POS = {
+  joystick: { x: 0.12, y: 0.82 },
+  boost:    { x: 0.82, y: 0.82 },
+};
+
+function loadCtrlPos() {
+  try {
+    const s = localStorage.getItem('scramble_ctrl');
+    return s ? JSON.parse(s) : DEFAULT_POS;
+  } catch { return DEFAULT_POS; }
 }
-addTouchBtn('up-btn',    'ArrowUp');
-addTouchBtn('down-btn',  'ArrowDown');
-addTouchBtn('left-btn',  'ArrowLeft');
-addTouchBtn('right-btn', 'ArrowRight');
-addTouchBtn('boost-btn', ' ');
+function saveCtrlPos(pos) {
+  try { localStorage.setItem('scramble_ctrl', JSON.stringify(pos)); } catch {}
+}
+
+function applyCtrlPos() {
+  const pos = loadCtrlPos();
+  const cw = canvas.offsetWidth, ch = canvas.offsetHeight;
+  joystickWrap.style.left = (pos.joystick.x * cw - 50) + 'px';
+  joystickWrap.style.top  = (pos.joystick.y * ch - 50) + 'px';
+  boostWrap.style.left    = (pos.boost.x    * cw - 34) + 'px';
+  boostWrap.style.top     = (pos.boost.y    * ch - 34) + 'px';
+}
+
+// ジョイスティック操作
+function updateJoystick(touch) {
+  const rect = joystickBase.getBoundingClientRect();
+  const cx = rect.left + rect.width  / 2;
+  const cy = rect.top  + rect.height / 2;
+  let dx = touch.clientX - cx, dy = touch.clientY - cy;
+  const dist = Math.sqrt(dx*dx + dy*dy);
+  const max  = JR - 21;
+  if (dist > max) { dx = dx/dist*max; dy = dy/dist*max; }
+  joystickThumb.style.left = (50 + dx/JR*100) + '%';
+  joystickThumb.style.top  = (50 + dy/JR*100) + '%';
+  joystickThumb.style.transform = 'translate(-50%,-50%)';
+  const th = 0.28, nd = dist > 8 ? dist : 0;
+  keys['ArrowLeft']  = nd > 0 && dx/max < -th;
+  keys['ArrowRight'] = nd > 0 && dx/max >  th;
+  keys['ArrowUp']    = nd > 0 && dy/max < -th;
+  keys['ArrowDown']  = nd > 0 && dy/max >  th;
+}
+function resetJoystick() {
+  keys['ArrowLeft'] = keys['ArrowRight'] = keys['ArrowUp'] = keys['ArrowDown'] = false;
+  joystickThumb.style.left = joystickThumb.style.top = '50%';
+  joystickThumb.style.transform = 'translate(-50%,-50%)';
+}
+
+joystickBase.addEventListener('touchstart', e => {
+  if (editMode) return;
+  e.preventDefault();
+  if (state !== 'playing' && state !== 'levelclear') startGame();
+  updateJoystick(e.touches[0]);
+}, { passive: false });
+joystickBase.addEventListener('touchmove',   e => { if (!editMode) { e.preventDefault(); updateJoystick(e.touches[0]); } }, { passive: false });
+joystickBase.addEventListener('touchend',    e => { if (!editMode) { e.preventDefault(); resetJoystick(); } }, { passive: false });
+joystickBase.addEventListener('touchcancel', ()  => { if (!editMode) resetJoystick(); });
+
+boostBtn.addEventListener('touchstart', e => {
+  if (editMode) return;
+  e.preventDefault(); keys[' '] = true; boostBtn.classList.add('pressed');
+  if (state !== 'playing' && state !== 'levelclear') startGame();
+}, { passive: false });
+boostBtn.addEventListener('touchend',    e => { if (!editMode) { e.preventDefault(); keys[' '] = false; boostBtn.classList.remove('pressed'); } }, { passive: false });
+boostBtn.addEventListener('touchcancel', ()  => { keys[' '] = false; boostBtn.classList.remove('pressed'); });
+
+// ボタン位置変更（ドラッグ）
+function makeDraggable(wrap, posKey) {
+  let startTX, startTY, startL, startT;
+  wrap.addEventListener('touchstart', e => {
+    if (!editMode) return;
+    e.preventDefault();
+    startTX = e.touches[0].clientX;
+    startTY = e.touches[0].clientY;
+    startL  = parseInt(wrap.style.left) || 0;
+    startT  = parseInt(wrap.style.top)  || 0;
+  }, { passive: false });
+  wrap.addEventListener('touchmove', e => {
+    if (!editMode) return;
+    e.preventDefault();
+    const dx = e.touches[0].clientX - startTX;
+    const dy = e.touches[0].clientY - startTY;
+    wrap.style.left = (startL + dx) + 'px';
+    wrap.style.top  = (startT + dy) + 'px';
+  }, { passive: false });
+  wrap.addEventListener('touchend', e => {
+    if (!editMode) return;
+    e.preventDefault();
+    const cw = canvas.offsetWidth, ch = canvas.offsetHeight;
+    const cx = parseInt(wrap.style.left) + (posKey === 'joystick' ? 50 : 34);
+    const cy = parseInt(wrap.style.top)  + (posKey === 'joystick' ? 50 : 34);
+    const pos = loadCtrlPos();
+    pos[posKey] = { x: cx/cw, y: cy/ch };
+    saveCtrlPos(pos);
+  }, { passive: false });
+}
+makeDraggable(joystickWrap, 'joystick');
+makeDraggable(boostWrap,    'boost');
+
+// 設定ボタン
+settingsBtn.addEventListener('touchstart', e => {
+  e.preventDefault();
+  e.stopPropagation();
+  editMode = !editMode;
+  gameWrap.classList.toggle('ctrl-edit', editMode);
+  settingsBtn.classList.toggle('active', editMode);
+  settingsBtn.textContent = editMode ? '✓' : '⚙';
+  if (!editMode) applyCtrlPos(); // snap to saved
+}, { passive: false });
+
+// リサイズ時に再配置
+window.addEventListener('resize', applyCtrlPos);
+// 初期配置（次フレームでcanvas.offsetWidthが確定してから）
+requestAnimationFrame(applyCtrlPos);
 
 function resizeCanvas() {
   const size = Math.min(window.innerWidth - 8, window.innerHeight * 0.58, 480);
