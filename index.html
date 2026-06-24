@@ -1,19 +1,311 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HubScription Games</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Special+Elite&family=Courier+Prime:wght@400;700&display=swap');
 
-— Independent Game Studio —
-HubScription Games
-✦
-Browser Games · Free to Play
-Games
-Action · Dodge
-Scramble Panic
+    :root {
+      --bg:       #0d0b08;
+      --bg2:      #161209;
+      --card:     #1c1610;
+      --border:   #3a3020;
+      --text:     #d8ccb0;
+      --muted:    #7a6e58;
+      --accent:   #c8a060;
+      --glow:     #c8a06044;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Courier Prime', 'Courier New', monospace;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    /* ノイズテクスチャ */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+      pointer-events: none;
+      z-index: 0;
+      opacity: 0.6;
+    }
+
+    header {
+      width: 100%;
+      padding: 48px 24px 32px;
+      text-align: center;
+      border-bottom: 1px solid var(--border);
+      position: relative;
+      z-index: 1;
+    }
+
+    .site-label {
+      font-size: clamp(10px, 2vw, 13px);
+      letter-spacing: 6px;
+      color: var(--muted);
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+
+    .site-title {
+      font-family: 'Special Elite', serif;
+      font-size: clamp(32px, 7vw, 64px);
+      letter-spacing: 4px;
+      color: var(--accent);
+      text-shadow: 0 0 30px var(--glow), 0 0 60px var(--glow);
+      line-height: 1.1;
+    }
+
+    .site-sub {
+      margin-top: 12px;
+      font-size: clamp(10px, 2vw, 13px);
+      letter-spacing: 4px;
+      color: var(--muted);
+    }
+
+    /* 装飾ライン */
+    .divider {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: var(--border);
+      font-size: 18px;
+      margin: 8px auto 0;
+      width: fit-content;
+    }
+    .divider::before, .divider::after {
+      content: '';
+      width: 60px;
+      height: 1px;
+      background: var(--border);
+    }
+
+    main {
+      width: 100%;
+      max-width: 960px;
+      padding: 48px 24px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .section-title {
+      font-size: clamp(10px, 2vw, 12px);
+      letter-spacing: 5px;
+      color: var(--muted);
+      text-transform: uppercase;
+      margin-bottom: 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .section-title::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+
+    .games-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 20px;
+    }
+
+    .game-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      padding: 28px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      position: relative;
+      overflow: hidden;
+      transition: border-color 0.3s, box-shadow 0.3s;
+      text-decoration: none;
+      color: inherit;
+    }
+
+    .game-card:hover {
+      border-color: var(--accent);
+      box-shadow: 0 0 20px var(--glow), inset 0 0 20px var(--glow);
+    }
+
+    /* コーナー装飾 */
+    .game-card::before, .game-card::after {
+      content: '';
+      position: absolute;
+      width: 10px; height: 10px;
+    }
+    .game-card::before {
+      top: 6px; left: 6px;
+      border-top: 1px solid var(--accent);
+      border-left: 1px solid var(--accent);
+    }
+    .game-card::after {
+      bottom: 6px; right: 6px;
+      border-bottom: 1px solid var(--accent);
+      border-right: 1px solid var(--accent);
+    }
+
+    .card-tag {
+      font-size: 10px;
+      letter-spacing: 3px;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+
+    .card-title {
+      font-family: 'Special Elite', serif;
+      font-size: clamp(20px, 4vw, 26px);
+      color: var(--text);
+      letter-spacing: 2px;
+      line-height: 1.2;
+    }
+
+    .card-desc {
+      font-size: 12px;
+      line-height: 1.8;
+      color: var(--muted);
+      flex: 1;
+    }
+
+    .card-ascii {
+      font-size: 11px;
+      line-height: 1.4;
+      color: var(--border);
+      font-family: monospace;
+      margin: 4px 0;
+    }
+
+    .card-play {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      letter-spacing: 3px;
+      color: var(--accent);
+      text-transform: uppercase;
+      margin-top: 4px;
+      transition: gap 0.2s;
+    }
+    .game-card:hover .card-play { gap: 12px; }
+
+    /* Coming Soon カード */
+    .game-card.coming-soon {
+      opacity: 0.45;
+      pointer-events: none;
+    }
+    .coming-badge {
+      position: absolute;
+      top: 14px; right: 14px;
+      font-size: 9px;
+      letter-spacing: 2px;
+      color: var(--muted);
+      border: 1px solid var(--border);
+      padding: 2px 6px;
+    }
+
+    footer {
+      margin-top: auto;
+      padding: 24px;
+      text-align: center;
+      font-size: 11px;
+      letter-spacing: 2px;
+      color: var(--muted);
+      border-top: 1px solid var(--border);
+      width: 100%;
+      position: relative;
+      z-index: 1;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="site-label">— Independent Game Studio —</div>
+    <div class="site-title">HubScription Games</div>
+    <div class="divider">✦</div>
+    <div class="site-sub">Browser Games · Free to Play</div>
+  </header>
+
+  <main>
+    <div class="section-title">Games</div>
+
+    <div class="games-grid">
+
+      <!-- SCRAMBLE PANIC -->
+      <a class="game-card" href="./scramble/" style="text-decoration:none;color:inherit;">
+        <div class="card-tag">Action · Dodge</div>
+        <div class="card-title">Scramble Panic</div>
+        <div class="card-ascii">
+░░░░░░░░░░░░░░<br>
+░ &nbsp;→ &nbsp;[YOU] → GOAL ░<br>
 ░░░░░░░░░░░░░░
-░  →  [YOU] → GOAL ░
-░░░░░░░░░░░░░░
-スクランブル交差点を突破せよ。
-全方向から押し寄せる人混みをかき分け、犬のいるゴールを目指す。
-▶ PLAY NOW
-COMING SOON
-— · —
-Next Game
-開発中
-© HubScription Games  ·  All games playable in browser
+        </div>
+        <div class="card-desc">
+          スクランブル交差点を突破せよ。<br>
+          全方向から押し寄せる人混みをかき分け、犬のいるゴールを目指す。
+        </div>
+        <div class="card-play">▶ PLAY NOW</div>
+      </a>
+
+      <!-- BLOOM -->
+      <a class="game-card" href="./bloom/" style="text-decoration:none;color:inherit;">
+        <div class="card-tag">Puzzle · Mix</div>
+        <div class="card-title">Bloom</div>
+        <div class="card-ascii">
+●  ●  ●<br>
+ ↘ ↓ ↙<br>
+&nbsp;&nbsp;&nbsp;●●●
+        </div>
+        <div class="card-desc">
+          7色の球が増殖していく。<br>
+          同じ色を3つ以上集めて消せ。色を混ぜると新しい色が生まれる。
+        </div>
+        <div class="card-play">▶ PLAY NOW</div>
+      </a>
+
+      <!-- B0-NINGEN-WORKOUT -->
+      <a class="game-card" href="./workout/" style="text-decoration:none;color:inherit;">
+        <div class="card-tag">Fitness · Tap</div>
+        <div class="card-title">B0-NINGEN-WORKOUT</div>
+        <div class="card-ascii">
+&nbsp;&nbsp;○<br>
+&nbsp;/|\<br>
+&nbsp;/ \
+        </div>
+        <div class="card-desc">
+          タップするたびに棒人間が筋トレ。<br>
+          続けるほどどんどんムキムキになっていく。
+        </div>
+        <div class="card-play">▶ PLAY NOW</div>
+      </a>
+
+      <!-- Coming Soon -->
+      <div class="game-card coming-soon">
+        <div class="coming-badge">COMING SOON</div>
+        <div class="card-tag">— · —</div>
+        <div class="card-title">Next Game</div>
+        <div class="card-desc">開発中</div>
+      </div>
+
+    </div>
+  </main>
+
+  <footer>
+    © HubScription Games &nbsp;·&nbsp; All games playable in browser
+  </footer>
+
+</body>
+</html>
