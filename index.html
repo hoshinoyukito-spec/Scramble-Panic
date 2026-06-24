@@ -28,7 +28,7 @@
       flex-wrap: wrap;
       justify-content: center;
     }
-    #game-wrap { position: relative; }
+    #game-wrap { position: relative; overflow: visible; }
     canvas {
       border: 2px solid #fff;
       box-shadow: 0 0 20px #fff4, 0 0 60px #fff2;
@@ -939,8 +939,8 @@ let editMode = false;
 
 // デフォルト位置（キャンバス表示サイズに対する割合）
 const DEFAULT_POS = {
-  joystick: { x: 0.12, y: 0.82 },
-  boost:    { x: 0.82, y: 0.82 },
+  joystick: { x: 0.15, y: 1.10 },
+  boost:    { x: 0.80, y: 1.10 },
 };
 
 function loadCtrlPos() {
