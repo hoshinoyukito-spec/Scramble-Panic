@@ -112,7 +112,8 @@
     .ctrl-edit #boost-btn     { border-color: #ff0 !important; border-style: dashed !important; }
     #settings-btn.active { color: #ff0; border-color: #ff0; }
     @media (pointer: coarse) {
-      #joystick-wrap, #boost-wrap, #settings-btn { display: flex; }
+      body { justify-content: flex-start; padding-top: 6px; }
+      #settings-btn { display: flex; }
       #message { display: none; }
     }
     #overlay {
@@ -871,6 +872,12 @@ document.addEventListener('keydown', e => {
 });
 document.addEventListener('keyup', e => { keys[e.key] = false; });
 
+function setCtrlVisible(visible) {
+  const d = visible ? 'flex' : 'none';
+  joystickWrap.style.display = d;
+  boostWrap.style.display    = d;
+}
+
 function showTitle() {
   ot.textContent = 'SCRAMBLE PANIC';
   osub.textContent = 'スクランブル交差点パニック';
@@ -880,6 +887,7 @@ function showTitle() {
   document.getElementById('help-btn').style.display = '';
   overlay.style.display = 'flex';
   state = 'title';
+  setCtrlVisible(false);
 }
 
 function startGame() {
@@ -896,6 +904,7 @@ function startGame() {
   }
   state = 'playing';
   overlay.style.display = 'none';
+  setCtrlVisible(true);
   showFlash(`WAVE ${level}`, 'ゴールの犬まで渡り切れ！', 80);
   canvas.focus();
 }
