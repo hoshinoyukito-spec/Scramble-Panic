@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>B0-NINGEN-WORKOUT — HubScription Games</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0d0b08;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      font-family: 'Courier New', monospace;
+      overflow: hidden;
+      touch-action: none;
+      user-select: none;
+      color: #d8ccb0;
+    }
+    canvas { display: block; cursor: pointer; }
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById('c');
+const ctx    = canvas.getContext('2d');
+const W = 380, H = 640;
+canvas.width  = W;
+canvas.height = H;
+const sc = Math.min(1, Math.min(window.innerWidth/W, window.innerHeight*0.98/H));
+canvas.style.width  = Math.floor(W*sc)+'px';
+canvas.style.height = Math.floor(H*sc)+'px';
+
+// ── 状態 ──
+let state    = 'select'; // 'select' | 'workout'
+let exKey    = 'pushup';
+let totalReps = parseInt(localStorage.getItem('workout_total') || '0');
+let animT    = 0;        // 0〜1、1 rep のアニメ進行
+let animating = false;
+let tick     = 0;
+let tapDown  = 0;
+let flashTimer = 0;
+let muscle   = 0;
+let tapQueue = 0; // 高速タップのキュー
+
+const REPS_TO_LEVEL = [0, 30, 100, 250, 500, 1000, 2000, 5000, 10000];
+const MUSCLE_NAMES  = ['ひょろひょろ','ちょっとついた','まあまあマッチョ','かなりマッチョ','超マッチョ！','鬼マッチョ','怪物級','伝説の肉体','神の領域'];
+
+const EXERCISES = [
+  { key:'pushup', name:'腕立て伏せ', label:'PUSH-UP' },
+  { key:'situp',  name:'腹筋',       label:'SIT-UP'  },
+  { key:'squat',  name:'スクワット', label:'SQUAT'   },
+  { key:'pullup', name:'懸垂',       label:'PULL-UP' },
+];
+
+function getMuscleLv() {
+  for(let i=REPS_TO_LEVEL.length-1;i>=0;i--) if(totalReps>=REPS_TO_LEVEL[i]) return i;
+  return 0;
+}
+
+// ── ユーティリティ ──
+function lerp(a,b,t){ return a+(b-a)*t; }
+function lerpPt(a,b,t){ return {x:lerp(a.x,b.x,t),y:lerp(a.y,b.y,t)}; }
+// アニメ曲線：0→sin波→0 （まげて伸ばすの頂点が中間）
+function curve(t){ return Math.sin(t*Math.PI); }
+
+// ── ポーズ定義（rest=休憩ポーズ、work=動作頂点ポーズ）──
+function getPoses(ex) {
+  const CX=W/2, CY=H*0.52;
+
+  if(ex==='pushup') {
+    // 腕立て：横向き。rest=腕伸ばし、work=腕曲げ（胸が床に近い）
+    const rest = {
+      head:      {x:CX+88, y:CY-24},
+      neck:      {x:CX+66, y:CY-18},
+      lShoulder: {x:CX+50, y:CY-14},
+      rShoulder: {x:CX+50, y:CY-14},
+      lElbow:    {x:CX+66, y:CY+14},
+      rElbow:    {x:CX+66, y:CY+14},
+      lHand:     {x:CX+78, y:CY+32},
+      rHand:     {x:CX+78, y:CY+32},
+      hip:       {x:CX-32, y:CY-8 },
+      lKnee:     {x:CX-58, y:CY-6 },
+      rKnee:     {x:CX-58, y:CY-6 },
+      lFoot:     {x:CX-86, y:CY-4 },
+      rFoot:     {x:CX-86, y:CY-4 },
+    };
+    const work = {
+      head:      {x:CX+88, y:CY+8 },
+      neck:      {x:CX+66, y:CY+4 },
+      lShoulder: {x:CX+50, y:CY+2 },
+      rShoulder: {x:CX+50, y:CY+2 },
+      lElbow:    {x:CX+54, y:CY+28},
+      rElbow:    {x:CX+54, y:CY+28},
+      lHand:     {x:CX+70, y:CY+34},
+      rHand:     {x:CX+70, y:CY+34},
+      hip:       {x:CX-32, y:CY+10},
+      lKnee:     {x:CX-58, y:CY+12},
+      rKnee:     {x:CX-58, y:CY+12},
+      lFoot:     {x:CX-86, y:CY+14},
+      rFoot:     {x:CX-86, y:CY+14},
+    };
+    return {rest, work, floor: CY+36};
+  }
+
+  if(ex==='situp') {
+    // 腹筋：仰向け、頭が右。rest=寝た状態、work=上体起こし
+    // 膝は常に曲げている（足は床についている）
+    // 腕は頭の後ろで組む
+    const rest = {
+      head:      {x:CX+80, y:CY+12},
+      neck:      {x:CX+58, y:CY+10},
+      lShoulder: {x:CX+38, y:CY+10},
+      rShoulder: {x:CX+38, y:CY+10},
+      lElbow:    {x:CX+68, y:CY-8 },  // 頭の後ろへ
+      rElbow:    {x:CX+68, y:CY-8 },
+      lHand:     {x:CX+84, y:CY+14},  // 頭の後ろで交差
+      rHand:     {x:CX+76, y:CY+14},
+      hip:       {x:CX-20, y:CY+12},
+      lKnee:     {x:CX-50, y:CY-10},
+      rKnee:     {x:CX-50, y:CY-10},
+      lFoot:     {x:CX-78, y:CY+12},
+      rFoot:     {x:CX-78, y:CY+12},
+    };
+    const work = {
+      head:      {x:CX+20, y:CY-36},
+      neck:      {x:CX+8,  y:CY-18},
+      lShoulder: {x:CX-6,  y:CY-4 },
+      rShoulder: {x:CX-6,  y:CY-4 },
+      lElbow:    {x:CX+10, y:CY-50}, // 上体が起きると肘が後頭部へ
+      rElbow:    {x:CX+4,  y:CY-50},
+      lHand:     {x:CX+22, y:CY-30},
+      rHand:     {x:CX+14, y:CY-30},
+      hip:       {x:CX-22, y:CY+12},
+      lKnee:     {x:CX-50, y:CY-10},
+      rKnee:     {x:CX-50, y:CY-10},
+      lFoot:     {x:CX-78, y:CY+12},
+      rFoot:     {x:CX-78, y:CY+12},
+    };
+    return {rest, work, floor: CY+14};
+  }
+
+  if(ex==='squat') {
+    // スクワット：正面向き
+    const rest = {
+      head:      {x:CX,    y:CY-138},
+      neck:      {x:CX,    y:CY-116},
+      lShoulder: {x:CX-28, y:CY-104},
+      rShoulder: {x:CX+28, y:CY-104},
+      lElbow:    {x:CX-44, y:CY-68 },
+      rElbow:    {x:CX+44, y:CY-68 },
+      lHand:     {x:CX-48, y:CY-34 },
+      rHand:     {x:CX+48, y:CY-34 },
+      hip:       {x:CX,    y:CY-56 },
+      lKnee:     {x:CX-22, y:CY+8  },
+      rKnee:     {x:CX+22, y:CY+8  },
+      lFoot:     {x:CX-26, y:CY+72 },
+      rFoot:     {x:CX+26, y:CY+72 },
+    };
+    const work = {
+      head:      {x:CX,    y:CY-72 },
+      neck:      {x:CX,    y:CY-52 },
+      lShoulder: {x:CX-32, y:CY-40 },
+      rShoulder: {x:CX+32, y:CY-40 },
+      lElbow:    {x:CX-52, y:CY-10 },
+      rElbow:    {x:CX+52, y:CY-10 },
+      lHand:     {x:CX-56, y:CY+22 },
+      rHand:     {x:CX+56, y:CY+22 },
+      hip:       {x:CX,    y:CY+14 },
+      lKnee:     {x:CX-38, y:CY+46 },
+      rKnee:     {x:CX+38, y:CY+46 },
+      lFoot:     {x:CX-32, y:CY+72 },
+      rFoot:     {x:CX+32, y:CY+72 },
+    };
+    return {rest, work, floor: CY+74};
+  }
+
+  if(ex==='pullup') {
+    const barY = H*0.28;
+    const rest = {
+      head:      {x:CX,    y:barY+46 },
+      neck:      {x:CX,    y:barY+64 },
+      lShoulder: {x:CX-20, y:barY+76 },
+      rShoulder: {x:CX+20, y:barY+76 },
+      lElbow:    {x:CX-28, y:barY+44 },
+      rElbow:    {x:CX+28, y:barY+44 },
+      lHand:     {x:CX-30, y:barY+8  },
+      rHand:     {x:CX+30, y:barY+8  },
+      hip:       {x:CX,    y:barY+120},
+      lKnee:     {x:CX-14, y:barY+178},
+      rKnee:     {x:CX+14, y:barY+178},
+      lFoot:     {x:CX-16, y:barY+234},
+      rFoot:     {x:CX+16, y:barY+234},
+      bar: {x1:CX-70, x2:CX+70, y:barY},
+    };
+    const work = {
+      head:      {x:CX,    y:barY-4  },
+      neck:      {x:CX,    y:barY+14 },
+      lShoulder: {x:CX-20, y:barY+26 },
+      rShoulder: {x:CX+20, y:barY+26 },
+      lElbow:    {x:CX-30, y:barY+10 },
+      rElbow:    {x:CX+30, y:barY+10 },
+      lHand:     {x:CX-30, y:barY+8  },
+      rHand:     {x:CX+30, y:barY+8  },
+      hip:       {x:CX,    y:barY+76 },
+      lKnee:     {x:CX-14, y:barY+130},
+      rKnee:     {x:CX+14, y:barY+130},
+      lFoot:     {x:CX-16, y:barY+184},
+      rFoot:     {x:CX+16, y:barY+184},
+      bar: {x1:CX-70, x2:CX+70, y:barY},
+    };
+    return {rest, work};
+  }
+
+  if(ex==='shoulder') {
+    // ショルダープレス：正面向き、腕を頭上に押し上げる
+    const rest = {
+      head:      {x:CX,    y:CY-138},
+      neck:      {x:CX,    y:CY-116},
+      lShoulder: {x:CX-28, y:CY-104},
+      rShoulder: {x:CX+28, y:CY-104},
+      lElbow:    {x:CX-50, y:CY-104}, // 肘を横に張る
+      rElbow:    {x:CX+50, y:CY-104},
+      lHand:     {x:CX-40, y:CY-132}, // 手は耳の横
+      rHand:     {x:CX+40, y:CY-132},
+      hip:       {x:CX,    y:CY-50 },
+      lKnee:     {x:CX-20, y:CY+14 },
+      rKnee:     {x:CX+20, y:CY+14 },
+      lFoot:     {x:CX-26, y:CY+74 },
+      rFoot:     {x:CX+26, y:CY+74 },
+    };
+    const work = {
+      head:      {x:CX,    y:CY-138},
+      neck:      {x:CX,    y:CY-116},
+      lShoulder: {x:CX-28, y:CY-104},
+      rShoulder: {x:CX+28, y:CY-104},
+      lElbow:    {x:CX-36, y:CY-158}, // 肘が頭上へ
+      rElbow:    {x:CX+36, y:CY-158},
+      lHand:     {x:CX-24, y:CY-196}, // 手を頭上に押し上げ
+      rHand:     {x:CX+24, y:CY-196},
+      hip:       {x:CX,    y:CY-50 },
+      lKnee:     {x:CX-20, y:CY+14 },
+      rKnee:     {x:CX+20, y:CY+14 },
+      lFoot:     {x:CX-26, y:CY+74 },
+      rFoot:     {x:CX+26, y:CY+74 },
+    };
+    return {rest, work, floor: CY+76};
+  }
+}
+
+// ── 棒人間描画 ──
+function drawFigure(ex, t, ml) {
+  const poses = getPoses(ex);
+  if(!poses) return;
+
+  const phase  = curve(t);    // 0→1→0
+  const {rest, work} = poses;
+
+  // 補間ポーズ
+  const p = {};
+  for(const k of Object.keys(rest)){
+    if(k==='bar'){p.bar=rest.bar;continue;}
+    p[k]=lerpPt(rest[k],work[k],phase);
+  }
+
+  // ── サイズ定義 ──
+  const AW  = [5,7,9,12,15,18,22,26,30][ml];  // 腕の太さ
+  const LW  = [5,7,9,12,15,18,21,25,29][ml];  // 脚の太さ
+  const TW  = [6,8,11,14,18,22,26,31,36][ml]; // 胴体の太さ
+  const bic = [0,2,5,9,13,17,22,27,33][ml];   // 力こぶ盛り上がり
+  const thi = [0,2,5,8,12,16,20,25,30][ml];   // 太もも盛り上がり
+  const cht = [0,0,4,8,12,16,21,26,32][ml];   // 胸板・背中
+  const hw  = [18,19,21,23,25,27,29,32,35][ml];
+
+  ctx.lineCap='round'; ctx.lineJoin='round';
+
+  // ── 肉を描くヘルパー（太い線＋前面ハイライト）──
+  function drawMeat(x1,y1,x2,y2,w,nx,ny){
+    // ベース（影側・暗め）
+    ctx.strokeStyle='#888'; ctx.lineWidth=w;
+    ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+    // ハイライト（前面・明るめ）
+    if(w>5){
+      const off=w*0.22;
+      ctx.strokeStyle='#c8c8c8'; ctx.lineWidth=w*0.5;
+      ctx.beginPath();
+      ctx.moveTo(x1+nx*off,y1+ny*off);
+      ctx.lineTo(x2+nx*off,y2+ny*off);
+      ctx.stroke();
+    }
+  }
+
+  // 力こぶなど筋肉の盛り上がりヘルパー（凸形の塗り）
+  function drawBulge(shx,shy,elx,ely,w,bul,nx,ny){
+    if(bul<=0)return;
+    const mx=(shx+elx)/2, my=(shy+ely)/2;
+    const cpx=mx+nx*(w/2+bul), cpy=my+ny*(w/2+bul);
+    ctx.fillStyle='#aaa';
+    ctx.beginPath();
+    ctx.moveTo(shx+nx*w*0.4, shy+ny*w*0.4);
+    ctx.quadraticCurveTo(cpx,cpy, elx+nx*w*0.4, ely+ny*w*0.4);
+    ctx.lineTo(elx-nx*2, ely-ny*2);
+    ctx.quadraticCurveTo(mx-nx*2,my-ny*2, shx-nx*2,shy-ny*2);
+    ctx.closePath(); ctx.fill();
+    // ピークのハイライト
+    ctx.strokeStyle='#ddd'; ctx.lineWidth=2;
+    ctx.beginPath();
+    ctx.moveTo(mx-nx*bul*0.1+nx*(w/2+bul*0.5), my-ny*bul*0.1+ny*(w/2+bul*0.5));
+    ctx.quadraticCurveTo(cpx,cpy,
+      mx+nx*bul*0.1+nx*(w/2+bul*0.5), my+ny*bul*0.1+ny*(w/2+bul*0.5));
+    ctx.stroke();
+  }
+
+  // 懸垂バー
+  if(p.bar){
+    ctx.strokeStyle='#888'; ctx.lineWidth=7;
+    ctx.beginPath(); ctx.moveTo(p.bar.x1,p.bar.y); ctx.lineTo(p.bar.x2,p.bar.y); ctx.stroke();
+  }
+
+  // ── 脚（肉付き）──
+  [['lKnee','lFoot',1],['rKnee','rFoot',-1]].forEach(([kn,ft,side])=>{
+    const dx=p[kn].x-p.hip.x, dy=p[kn].y-p.hip.y;
+    const len=Math.sqrt(dx*dx+dy*dy)||1;
+    const nx=side*(-dy/len), ny=side*(dx/len);
+    drawMeat(p.hip.x,p.hip.y,p[kn].x,p[kn].y,LW,nx,ny);
+    // 下腿はハイライトなし（足元に線が出るのを防ぐ）
+    ctx.strokeStyle='#888'; ctx.lineWidth=LW*0.85;
+    ctx.beginPath(); ctx.moveTo(p[kn].x,p[kn].y); ctx.lineTo(p[ft].x,p[ft].y); ctx.stroke();
+    // 大腿四頭筋（スクワットのみ）
+    if(thi>0&&ex==='squat'){
+      drawBulge(p.hip.x,p.hip.y,p[kn].x,p[kn].y,LW,thi,nx,ny);
+    }
+  });
+
+  // ── 胴体（肉付き）──
+  {
+    const dx=p.hip.x-p.neck.x, dy=p.hip.y-p.neck.y;
+    const len=Math.sqrt(dx*dx+dy*dy)||1;
+    const nx=-dy/len, ny=dx/len;
+    // 広背筋によるV字（懸垂）: 肩幅をcht分広げる
+    const sw = ex==='pullup' ? cht*0.5 : 0;
+    // 肩ライン（三角筋含む幅）
+    const shoulderW = TW*0.7 + (ex==='pushup' ? cht*0.3 : 0);
+    ctx.strokeStyle='#888'; ctx.lineWidth=TW;
+    ctx.beginPath(); ctx.moveTo(p.neck.x,p.neck.y); ctx.lineTo(p.hip.x,p.hip.y); ctx.stroke();
+    ctx.strokeStyle='#bbb'; ctx.lineWidth=TW*0.45;
+    ctx.beginPath(); ctx.moveTo(p.neck.x+nx*TW*0.2,p.neck.y+ny*TW*0.2);
+    ctx.lineTo(p.hip.x+nx*TW*0.2,p.hip.y+ny*TW*0.2); ctx.stroke();
+    ctx.strokeStyle='#888'; ctx.lineWidth=shoulderW;
+    ctx.beginPath(); ctx.moveTo(p.lShoulder.x-sw,p.lShoulder.y);
+    ctx.lineTo(p.rShoulder.x+sw,p.rShoulder.y); ctx.stroke();
+    ctx.strokeStyle='#bbb'; ctx.lineWidth=shoulderW*0.4;
+    ctx.beginPath(); ctx.moveTo(p.lShoulder.x-sw,p.lShoulder.y+shoulderW*0.15);
+    ctx.lineTo(p.rShoulder.x+sw,p.rShoulder.y+shoulderW*0.15); ctx.stroke();
+  }
+
+  // ── 腕（肉付き＋力こぶ）──
+  [['lShoulder','lElbow','lHand',1],['rShoulder','rElbow','rHand',-1]].forEach(([sh,el,hd,side],idx)=>{
+    const dx=p[el].x-p[sh].x, dy=p[el].y-p[sh].y;
+    const len=Math.sqrt(dx*dx+dy*dy)||1;
+    let nx,ny;
+    if(ex==='pullup'){
+      nx=idx===0?1:-1; ny=0; // 懸垂：内側方向
+    } else {
+      nx=dy/len; ny=-dx/len;
+    }
+    drawMeat(p[sh].x,p[sh].y,p[el].x,p[el].y,AW,nx,ny);
+    drawMeat(p[el].x,p[el].y,p[hd].x,p[hd].y,AW*0.85,nx,ny);
+    // 力こぶ（腕を使う種目のみ）
+    if(bic>0&&(ex==='pushup'||ex==='pullup')){
+      drawBulge(p[sh].x,p[sh].y,p[el].x,p[el].y,AW,bic,nx,ny);
+    }
+    // 三角筋（腕立てのみ、懸垂は控えめ）
+    if(bic>2 && ex==='pushup'){
+      const delt=bic*0.8;
+      ctx.fillStyle='#999';
+      ctx.beginPath(); ctx.arc(p[sh].x,p[sh].y,AW/2+delt*0.6,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle='#bbb';
+      ctx.beginPath(); ctx.arc(p[sh].x+nx*delt*0.2,p[sh].y+ny*delt*0.2,delt*0.3,0,Math.PI*2); ctx.fill();
+    }
+  });
+
+  // ── 大胸筋（腕立て：胴体前面に厚みのある弧）──
+  if(cht>0&&ex==='pushup'){
+    const mx=(p.lShoulder.x+p.rShoulder.x)/2, my=(p.lShoulder.y+p.rShoulder.y)/2;
+    const dx=p.hip.x-mx, dy=p.hip.y-my, len=Math.sqrt(dx*dx+dy*dy)||1;
+    const nx=-dy/len, ny=dx/len;
+    ctx.fillStyle='rgba(160,160,160,0.6)';
+    ctx.beginPath();
+    ctx.moveTo(p.lShoulder.x+nx*TW*0.4,p.lShoulder.y+ny*TW*0.4);
+    ctx.quadraticCurveTo(mx+nx*(TW*0.4+cht*0.7),my+ny*(TW*0.4+cht*0.7),
+                          p.hip.x+nx*TW*0.3,p.hip.y+ny*TW*0.3);
+    ctx.lineTo(p.hip.x-nx*2,p.hip.y-ny*2);
+    ctx.quadraticCurveTo(mx-nx*2,my-ny*2,p.lShoulder.x-nx*2,p.lShoulder.y-ny*2);
+    ctx.closePath(); ctx.fill();
+    if(cht>6){
+      ctx.strokeStyle='#ccc'; ctx.lineWidth=1.5;
+      ctx.beginPath();
+      ctx.moveTo(mx+nx*(TW*0.3+cht*0.3), my+ny*(TW*0.3+cht*0.3));
+      ctx.quadraticCurveTo(mx+nx*(TW*0.4+cht*0.7),my+ny*(TW*0.4+cht*0.7),
+                            mx+dx/len*cht*0.2+nx*(TW*0.3+cht*0.5),
+                            my+dy/len*cht*0.2+ny*(TW*0.3+cht*0.5));
+      ctx.stroke();
+    }
+  }
+
+  // ── 広背筋の定義線（懸垂）──
+  if(cht>6&&ex==='pullup'){
+    ctx.strokeStyle='#999'; ctx.lineWidth=1.5;
+    ctx.beginPath();
+    ctx.moveTo(p.neck.x-2,p.neck.y+4); ctx.lineTo(p.hip.x-2,p.hip.y-4); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(p.neck.x+2,p.neck.y+4); ctx.lineTo(p.hip.x+2,p.hip.y-4); ctx.stroke();
+  }
+
+  // ── 腹筋（腹筋・スクワット）──
+  if(cht>0&&(ex==='situp'||ex==='squat')){
+    const tx=(p.neck.x+p.hip.x)/2;
+    const absW=Math.min(TW*0.45,12);
+    const absCount=ml>=4?3:2;
+    ctx.strokeStyle='#777'; ctx.lineWidth=1.5;
+    for(let ai=1;ai<=absCount;ai++){
+      const ratio=0.28+ai*0.2;
+      const ax=p.neck.x+(p.hip.x-p.neck.x)*ratio;
+      const ay=p.neck.y+(p.hip.y-p.neck.y)*ratio;
+      ctx.beginPath(); ctx.moveTo(ax-absW,ay); ctx.lineTo(ax+absW,ay); ctx.stroke();
+    }
+    ctx.strokeStyle='#666'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(tx,p.neck.y+8); ctx.lineTo(tx,p.hip.y-6); ctx.stroke();
+  }
+
+  // 頭
+  ctx.fillStyle='#ccc'; ctx.strokeStyle='#999'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.arc(p.head.x,p.head.y,hw,0,Math.PI*2); ctx.fill(); ctx.stroke();
+
+  // 床ライン
+  if(poses.floor){
+    ctx.strokeStyle='#222'; ctx.lineWidth=2; ctx.setLineDash([6,5]);
+    ctx.beginPath(); ctx.moveTo(20,poses.floor); ctx.lineTo(W-20,poses.floor); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+
+// ── 選択画面 ──
+function drawSelect() {
+  ctx.fillStyle='#0d0b08';
+  ctx.fillRect(0,0,W,H);
+
+  // タイトル
+  ctx.fillStyle='#c8a060';
+  ctx.font='bold 36px Courier New';
+  ctx.textAlign='center';
+  ctx.font='bold 26px Courier New';
+  ctx.fillText('B0-NINGEN-WORKOUT',W/2,70);
+  ctx.fillStyle='#555';
+  ctx.font='12px Courier New';
+  ctx.fillText('種目を選んでください',W/2,96);
+
+  // ボタン
+  const btns=[
+    {key:'pushup', name:'腕立て伏せ', sub:'PUSH-UP'},
+    {key:'situp',  name:'腹筋',       sub:'SIT-UP'},
+    {key:'squat',  name:'スクワット', sub:'SQUAT'},
+    {key:'pullup', name:'懸垂',       sub:'PULL-UP'},
+  ];
+
+  btns.forEach((b,i)=>{
+    const bx=30, by=118+i*116, bw=W-60, bh=96;
+    const hover = Math.floor(tick/30)%2===0 && i===0; // 最初のボタンが点滅（ヒント）
+
+    ctx.fillStyle='#141210';
+    ctx.fillRect(bx,by,bw,bh);
+    ctx.strokeStyle='#3a3020';
+    ctx.lineWidth=1;
+    ctx.strokeRect(bx,by,bw,bh);
+
+    // コーナー装飾
+    const cs=8;
+    ctx.strokeStyle='#c8a060'; ctx.lineWidth=1.5;
+    [[bx,by],[bx+bw,by],[bx,by+bh],[bx+bw,by+bh]].forEach(([cx2,cy2],ci)=>{
+      const sx=ci%2===0?1:-1, sy=ci<2?1:-1;
+      ctx.beginPath();
+      ctx.moveTo(cx2+sx*cs,cy2); ctx.lineTo(cx2,cy2); ctx.lineTo(cx2,cy2+sy*cs);
+      ctx.stroke();
+    });
+
+    ctx.fillStyle='#d8ccb0';
+    ctx.font='bold 24px Courier New';
+    ctx.textAlign='center';
+    ctx.fillText(b.name,W/2,by+40);
+    ctx.fillStyle='#555';
+    ctx.font='12px Courier New';
+    ctx.fillText(b.sub,W/2,by+62);
+  });
+
+  // 累計表示
+  if(totalReps>0){
+    ctx.fillStyle='#333';
+    ctx.font='11px Courier New';
+    ctx.fillText(`累計 ${totalReps} rep / ${MUSCLE_NAMES[getMuscleLv()]}`,W/2,H-38);
+    // リセットボタン
+    const rx=W/2-50, ry=H-26, rw=100, rh=20;
+    ctx.fillStyle='#1a1208';
+    ctx.fillRect(rx,ry,rw,rh);
+    ctx.strokeStyle='#3a2010'; ctx.lineWidth=1;
+    ctx.strokeRect(rx,ry,rw,rh);
+    ctx.fillStyle='#553322'; ctx.font='11px Courier New';
+    ctx.fillText('↺ リセット',W/2,ry+14);
+  }
+  ctx.textAlign='left';
+}
+
+// ── ワークアウト画面 ──
+function drawWorkout() {
+  ctx.fillStyle='#0d0b08';
+  ctx.fillRect(0,0,W,H);
+
+  muscle=getMuscleLv();
+  drawFigure(exKey, animT, muscle);
+  drawWorkoutHUD();
+}
+
+function drawWorkoutHUD() {
+  const ex=EXERCISES.find(e=>e.key===exKey);
+  const ml=getMuscleLv();
+
+  // 戻るボタン（最上部）
+  ctx.fillStyle='rgba(0,0,0,.85)'; ctx.fillRect(0,0,W,32);
+  ctx.fillStyle='#2a2018'; ctx.fillRect(8,4,60,24);
+  ctx.strokeStyle='#3a3020'; ctx.lineWidth=1; ctx.strokeRect(8,4,60,24);
+  ctx.fillStyle='#888'; ctx.font='11px Courier New'; ctx.textAlign='left';
+  ctx.fillText('← 戻る',14,20);
+
+  // 種目名（戻るボタンの下）
+  ctx.fillStyle='rgba(0,0,0,.7)'; ctx.fillRect(0,32,W,30);
+  ctx.fillStyle='#c8a060'; ctx.font='bold 18px Courier New'; ctx.textAlign='center';
+  ctx.fillText(`${ex.name}  ${ex.label}`,W/2,52);
+
+  // rep数（種目名の下）
+  const repY = 138;
+  ctx.fillStyle='#fff'; ctx.font='bold 80px Courier New';
+  ctx.fillText(totalReps,W/2,repY);
+  ctx.fillStyle='#555'; ctx.font='13px Courier New';
+  ctx.fillText('rep',W/2,repY+18);
+  ctx.textAlign='center';
+
+
+  // 操作説明（ゲージの少し上）
+  ctx.fillStyle='#aaa'; ctx.font='11px Courier New';
+  ctx.fillText('タップ / SPACE / ENTER で1回！', W/2, H-110);
+
+  // 筋肉レベル＋プログレスバー（下部にまとめる）
+  ctx.fillStyle='#c8a060'; ctx.font='bold 14px Courier New';
+  ctx.fillText(MUSCLE_NAMES[ml],W/2,H-56);
+
+  const next=ml<REPS_TO_LEVEL.length-1?REPS_TO_LEVEL[ml+1]:null;
+  if(next!==null){
+    const prev=REPS_TO_LEVEL[ml];
+    const ratio=(totalReps-prev)/(next-prev);
+    const bx=30,by=H-40,bw=W-60;
+    ctx.fillStyle='#1a1810'; ctx.fillRect(bx,by,bw,7);
+    ctx.fillStyle='#c8a060'; ctx.fillRect(bx,by,Math.floor(bw*ratio),7);
+    ctx.strokeStyle='#333'; ctx.lineWidth=1; ctx.strokeRect(bx,by,bw,7);
+    ctx.fillStyle='#555'; ctx.font='10px Courier New';
+    ctx.fillText(`次のレベルまで ${next-totalReps} rep`,W/2,H-22);
+  } else {
+    ctx.fillStyle='#c8a060'; ctx.font='11px Courier New';
+    ctx.fillText('MAX LEVEL 達成！！',W/2,H-30);
+  }
+
+
+  // アニメ中インジケーター
+  if(animating){
+    ctx.fillStyle='rgba(200,160,96,.2)';
+    ctx.fillRect(0,0,W,H);
+  }
+
+  // フラッシュ
+  if(flashTimer>0){
+    ctx.fillStyle=`rgba(255,255,255,${flashTimer/14*.22})`;
+    ctx.fillRect(0,0,W,H);
+    flashTimer--;
+  }
+
+  ctx.textAlign='left';
+}
+
+// ── 入力 ──
+function getCanvasPos(e){
+  const rect=canvas.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-rect.top;
+  return {x:cx/sc, y:cy/sc};
+}
+
+function onDown(e){ e.preventDefault(); tapDown=Date.now(); }
+
+function onUp(e){
+  e.preventDefault();
+  const held=Date.now()-tapDown;
+  if(held>380) return; // 長押し無効
+
+  const pos=getCanvasPos(e.type==='touchend'?{...e,touches:e.changedTouches}:e);
+
+  if(state==='select'){
+    // リセットボタン判定
+    if(totalReps>0 && pos.x>=W/2-50&&pos.x<=W/2+50&&pos.y>=H-26&&pos.y<=H-6){
+      if(confirm('記録をリセットしますか？')){
+        totalReps=0; muscle=0;
+        localStorage.removeItem('workout_total');
+      }
+      return;
+    }
+    // 種目ボタン判定
+    const btns=[
+      {key:'pushup',y:118},{key:'situp',y:234},
+      {key:'squat',y:350},{key:'pullup',y:466},
+    ];
+    for(const b of btns){
+      if(pos.x>=30&&pos.x<=W-30&&pos.y>=b.y&&pos.y<=b.y+96){
+        exKey=b.key; state='workout'; return;
+      }
+    }
+    return;
+  }
+
+  if(state==='workout'){
+    // 戻るボタン
+    if(pos.x>=8&&pos.x<=68&&pos.y>=4&&pos.y<=28){
+      state='select'; return;
+    }
+    // アニメ中はキューに積む（最大8個）
+    if(animating){ tapQueue = Math.min(tapQueue+1, 8); return; }
+    // 1タップ = 1回スタート
+    animating=true;
+    animT=0;
+  }
+}
+
+canvas.addEventListener('mousedown', onDown, {passive:false});
+canvas.addEventListener('mouseup',   onUp,   {passive:false});
+canvas.addEventListener('touchstart',onDown, {passive:false});
+canvas.addEventListener('touchend',  onUp,   {passive:false});
+
+document.addEventListener('keydown', e => {
+  if(e.repeat) return; // 長押しリピート無効
+  if(e.key==='Enter'||e.key===' ') {
+    e.preventDefault();
+    if(state==='workout'){
+      if(!animating){ animating=true; animT=0; }
+      else tapQueue = Math.min(tapQueue+1, 8); // 最大8個まで
+    }
+  }
+});
+
+// ── メインループ ──
+const ANIM_SPEED = 0.038; // 1回のアニメ速度
+
+function loop(){
+  tick++;
+
+  if(state==='workout' && animating){
+    // キューが溜まっているほど速くなる
+    const speed = ANIM_SPEED * (1 + Math.min(tapQueue, 4) * 0.5);
+    animT += speed;
+    if(animT>=1){
+      totalReps++; localStorage.setItem('workout_total', totalReps);
+      muscle=getMuscleLv(); flashTimer=10;
+      if(tapQueue>0){ tapQueue--; animT=0; } // キューがあればすぐ次へ
+      else { animT=0; animating=false; }
+    }
+  }
+
+  if(state==='select') drawSelect();
+  else                  drawWorkout();
+
+  requestAnimationFrame(loop);
+}
+
+loop();
+</script>
+</body>
+</html>
