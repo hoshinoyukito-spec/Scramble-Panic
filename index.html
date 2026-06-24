@@ -153,27 +153,156 @@
       margin-top: 6px;
     }
     @keyframes blink { 50% { opacity: 0; } }
+    /* メニューボタン */
+    #menu-btn {
+      font-family: 'Courier New', monospace;
+      font-size: clamp(10px, 2vw, 13px);
+      background: rgba(255,255,255,0.1);
+      border: 1px solid #666;
+      color: #ccc;
+      padding: 3px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      letter-spacing: 1px;
+    }
+    #menu-btn:hover { background: rgba(255,255,255,0.2); }
+    /* タイトルのボタン群 */
+    .title-btns {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
+      margin-top: 4px;
+    }
+    .title-btn {
+      font-family: 'Courier New', monospace;
+      font-size: clamp(12px, 3vw, 15px);
+      padding: 8px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      letter-spacing: 1px;
+      border: 2px solid;
+    }
+    #start-btn { border-color: #fff; color: #fff; background: rgba(255,255,255,0.1); animation: blink 1s step-end infinite; }
+    #help-btn  { border-color: #888; color: #888; background: transparent; }
+    /* ヘルプオーバーレイ */
+    #help-overlay {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.9);
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      padding: 16px 20px;
+      overflow-y: auto;
+      z-index: 30;
+      gap: 10px;
+    }
+    #help-overlay h2 { font-size: clamp(16px, 4vw, 22px); letter-spacing: 3px; }
+    .help-section { width: 100%; }
+    .help-section h3 { font-size: clamp(11px, 2.5vw, 13px); color: #ff0; margin-bottom: 4px; letter-spacing: 1px; }
+    .help-section p  { font-size: clamp(10px, 2.2vw, 12px); color: #bbb; line-height: 1.7; }
+    .help-section p span { color: #fff; }
+    #help-back {
+      font-family: 'Courier New', monospace;
+      padding: 8px 24px;
+      border: 2px solid #fff;
+      color: #fff;
+      background: transparent;
+      cursor: pointer;
+      font-size: 14px;
+      letter-spacing: 2px;
+      margin-top: 4px;
+      border-radius: 4px;
+    }
+    /* 設定モードのサイズ調整UI */
+    #ctrl-size-ui {
+      position: absolute;
+      top: 6px; left: 6px;
+      display: none;
+      gap: 6px;
+      z-index: 20;
+      align-items: center;
+    }
+    #ctrl-size-ui span { font-size: 11px; color: #ff0; font-family: 'Courier New', monospace; }
+    .size-btn {
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      border: 1px solid #ff0;
+      color: #ff0;
+      background: rgba(0,0,0,0.6);
+      font-size: 16px;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer;
+      user-select: none;
+    }
   </style>
 </head>
 <body>
+  <div style="font-family:'Courier New',monospace;color:#555;font-size:clamp(9px,2vw,12px);letter-spacing:2px;margin-bottom:2px;">SCRAMBLE PANIC</div>
   <div id="hud">
     <span>SCORE: <span id="score">0</span></span>
     <span>WAVE: <span id="level">1</span></span>
     <span>LIVES: <span id="lives">3</span></span>
     <span>POWER: <span id="power-hud">0%</span></span>
+    <button id="menu-btn">MENU</button>
   </div>
   <div id="game-wrap">
     <canvas id="c" width="480" height="540" tabindex="0"></canvas>
+
+    <!-- タイトル／ゲームオーバーオーバーレイ -->
     <div id="overlay">
       <h1 id="ot">SCRAMBLE PANIC</h1>
       <h2 id="osub">スクランブル交差点パニック</h2>
       <div class="overlay-rules" id="orules">
-        <span>下</span>からスタート → <span>ゴール</span>まで渡り切れ！<br>
+        <span>下</span>からスタート → <span>ゴール（犬）</span>まで渡り切れ！<br>
         全方向から人が交差点を横切っている<br>
         ぶつからずに渡り切ると<span>次のウェーブ</span>へ<br>
         ライフ<span>3</span>つ &nbsp;|&nbsp; 何ウェーブまで行けるか挑戦！
       </div>
-      <p class="start-msg" id="op">TAP OR PRESS SPACE</p>
+      <div class="title-btns" id="title-btns">
+        <button class="title-btn" id="start-btn">▶ START</button>
+        <button class="title-btn" id="help-btn">？ HOW TO PLAY</button>
+      </div>
+    </div>
+
+    <!-- ヘルプページ -->
+    <div id="help-overlay">
+      <h2>HOW TO PLAY</h2>
+      <div class="help-section">
+        <h3>■ 目的</h3>
+        <p>交差点の<span>下（START）</span>からスタートし、<span>ゴール（犬）</span>まで渡り切ればウェーブクリア。何ウェーブまで続けられるか挑戦！</p>
+      </div>
+      <div class="help-section">
+        <h3>■ ルール</h3>
+        <p>・全方向から人が歩いてくる — ぶつかると<span>スタートに戻る</span><br>
+        ・ライフは<span>3つ</span>。0になるとゲームオーバー<br>
+        ・ゲームオーバー後は同じウェーブからリトライできる<br>
+        ・ゴールの場所はウェーブごとに<span>上・左・右でランダム</span></p>
+      </div>
+      <div class="help-section">
+        <h3>■ 操作（PC）</h3>
+        <p>移動：<span>↑↓←→ または WASD</span><br>
+        BOOST発動：<span>スペースキー</span>（パワーが100%のとき）</p>
+      </div>
+      <div class="help-section">
+        <h3>■ 操作（スマホ）</h3>
+        <p>移動：画面左の<span>ジョイスティック</span>をドラッグ（斜め移動対応）<br>
+        BOOST発動：画面右の<span>BOOSTボタン</span></p>
+      </div>
+      <div class="help-section">
+        <h3>■ BOOST</h3>
+        <p>パワーが<span>100%</span>になったら発動できる。<span>3秒間</span>人を弾き飛ばせる（＋20点）。ぶつかるとパワーが0にリセット。</p>
+      </div>
+      <div class="help-section">
+        <h3>■ ボタン位置・サイズ変更（スマホ）</h3>
+        <p>画面右上の<span>⚙ボタン</span>を押すと設定モードになる。<br>
+        ・ジョイスティック／BOOSTを<span>ドラッグ</span>して好きな位置に移動<br>
+        ・左上の<span>＋／－</span>でボタンのサイズを変更<br>
+        ・<span>✓ボタン</span>を押すと位置・サイズが保存される</p>
+      </div>
+      <button id="help-back">← BACK</button>
     </div>
     <!-- キャンバス上に重ねるコントロール -->
     <div id="joystick-wrap">
@@ -183,6 +312,12 @@
       <div id="boost-btn">BOOST</div>
     </div>
     <div id="settings-btn">⚙</div>
+    <!-- 設定モード：サイズ調整 -->
+    <div id="ctrl-size-ui">
+      <div class="size-btn" id="size-minus">－</div>
+      <span id="size-label">SIZE</span>
+      <div class="size-btn" id="size-plus">＋</div>
+    </div>
   </div>
   <div id="message">←→↑↓ / WASD で移動 &nbsp;|&nbsp; SPACE でパワー発動 &nbsp;|&nbsp; 矢印の方向にあるゴールを目指せ！</div>
 
@@ -191,15 +326,17 @@ const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 const W = canvas.width, H = canvas.height;
 
-const overlay   = document.getElementById('overlay');
-const ot        = document.getElementById('ot');
-const osub      = document.getElementById('osub');
-const op        = document.getElementById('op');
-const orules    = document.getElementById('orules');
-const scoreEl   = document.getElementById('score');
-const levelEl   = document.getElementById('level');
-const livesEl   = document.getElementById('lives');
-const powerHudEl= document.getElementById('power-hud');
+const overlay     = document.getElementById('overlay');
+const helpOverlay = document.getElementById('help-overlay');
+const ot          = document.getElementById('ot');
+const osub        = document.getElementById('osub');
+const op          = document.getElementById('op');
+const orules      = document.getElementById('orules');
+const titleBtns   = document.getElementById('title-btns');
+const scoreEl     = document.getElementById('score');
+const levelEl     = document.getElementById('level');
+const livesEl     = document.getElementById('lives');
+const powerHudEl  = document.getElementById('power-hud');
 
 const START_X = W / 2;
 const START_Y = H - 44;
@@ -227,6 +364,7 @@ let player, pedestrians, particles;
 let keys = {};
 let tick = 0;
 let spawnTimer = 0;
+let waveStartTick = 0; // ウェーブ開始時のtick
 let power = 0;        // 0〜100
 let powered = false;  // ブーストモード中
 let poweredTimer = 0;
@@ -522,6 +660,7 @@ function resetPlayer() {
   pedestrians = [];
   particles = [];
   spawnTimer = 0;
+  waveStartTick = tick;
   power = 0; powered = false; poweredTimer = 0;
   powerHudEl.textContent = '0%';
   randomizeGoal();
@@ -575,10 +714,12 @@ function update() {
   const gdx = player.x - goal.x, gdy = player.y - goal.y;
   if (Math.sqrt(gdx*gdx + gdy*gdy) < GOAL_R + 12 && state === 'playing') {
     state = 'levelclear';
-    const bonus = 100 + level * 50;
+    const elapsed = Math.max(1, (tick - waveStartTick) / 60); // 秒
+    const timeBonus = Math.max(1, Math.floor(30 / elapsed * 100)); // 速いほど高得点
+    const bonus = (100 + level * 50) + timeBonus;
     score += bonus;
     scoreEl.textContent = score;
-    showFlash(`WAVE ${level} クリア！`, `BONUS +${bonus}`, 100);
+    showFlash(`WAVE ${level} クリア！`, `BONUS +${bonus}  (${elapsed.toFixed(1)}秒)`, 100);
     setTimeout(() => {
       level++;
       levelEl.textContent = level;
@@ -657,8 +798,10 @@ function hitPlayer() {
     state = 'gameover';
     ot.textContent = 'GAME OVER';
     osub.textContent = `WAVE ${level} で力尽きた…`;
-    op.textContent = `SCORE: ${score}  |  TAP TO RETRY`;
     orules.style.display = 'none';
+    titleBtns.style.display = 'flex';
+    document.getElementById('start-btn').textContent = '▶ RETRY';
+    document.getElementById('help-btn').style.display = 'none';
     overlay.style.display = 'flex';
   } else {
     player.x = START_X;
@@ -728,12 +871,20 @@ document.addEventListener('keydown', e => {
 });
 document.addEventListener('keyup', e => { keys[e.key] = false; });
 
+function showTitle() {
+  ot.textContent = 'SCRAMBLE PANIC';
+  osub.textContent = 'スクランブル交差点パニック';
+  orules.style.display = '';
+  titleBtns.style.display = 'flex';
+  document.getElementById('start-btn').textContent = '▶ START';
+  document.getElementById('help-btn').style.display = '';
+  overlay.style.display = 'flex';
+  state = 'title';
+}
+
 function startGame() {
   if (state === 'playing' || state === 'levelclear') return;
-  orules.style.display = '';
-  osub.textContent = 'スクランブル交差点パニック';
   if (state === 'gameover') {
-    // ゲームオーバーからのリトライ：同じwaveから
     lives = 3; score = 0;
     level = retryLevel;
     scoreEl.textContent = 0;
@@ -741,15 +892,38 @@ function startGame() {
     levelEl.textContent = level;
     resetPlayer();
   } else {
-    init(); // タイトルからの新規スタート
+    init();
   }
   state = 'playing';
   overlay.style.display = 'none';
-  showFlash(`WAVE ${level}`, '上のGOALまで渡り切れ！', 80);
+  showFlash(`WAVE ${level}`, 'ゴールの犬まで渡り切れ！', 80);
   canvas.focus();
 }
 
-overlay.addEventListener('click', startGame);
+// タイトルに戻る
+function goToTitle() {
+  if (state === 'playing' || state === 'levelclear') {
+    state = 'title';
+  }
+  showTitle();
+}
+
+// MENUボタン
+document.getElementById('menu-btn').addEventListener('click', goToTitle);
+document.getElementById('menu-btn').addEventListener('touchend', e => { e.preventDefault(); goToTitle(); }, { passive: false });
+
+// タイトルのSTARTボタン
+document.getElementById('start-btn').addEventListener('click', startGame);
+document.getElementById('start-btn').addEventListener('touchend', e => { e.preventDefault(); startGame(); }, { passive: false });
+
+// HOW TO PLAYボタン
+document.getElementById('help-btn').addEventListener('click', () => { overlay.style.display='none'; helpOverlay.style.display='flex'; });
+document.getElementById('help-btn').addEventListener('touchend', e => { e.preventDefault(); overlay.style.display='none'; helpOverlay.style.display='flex'; }, { passive: false });
+
+// HELPのBACKボタン
+document.getElementById('help-back').addEventListener('click', () => { helpOverlay.style.display='none'; showTitle(); });
+document.getElementById('help-back').addEventListener('touchend', e => { e.preventDefault(); helpOverlay.style.display='none'; showTitle(); }, { passive: false });
+
 canvas.addEventListener('click', () => { if (state !== 'playing' && state !== 'levelclear') startGame(); });
 
 // --- Touch controls (overlaid on canvas) ---
@@ -863,6 +1037,32 @@ function makeDraggable(wrap, posKey) {
 makeDraggable(joystickWrap, 'joystick');
 makeDraggable(boostWrap,    'boost');
 
+// サイズ調整
+const ctrlSizeUI = document.getElementById('ctrl-size-ui');
+let ctrlScale = parseFloat(localStorage.getItem('scramble_ctrl_scale') || '1');
+
+function applyCtrlScale() {
+  const s = ctrlScale;
+  joystickBase.style.width  = (100 * s) + 'px';
+  joystickBase.style.height = (100 * s) + 'px';
+  boostBtn.style.width  = (68 * s) + 'px';
+  boostBtn.style.height = (68 * s) + 'px';
+  boostBtn.style.fontSize = (11 * s) + 'px';
+  document.getElementById('size-label').textContent = Math.round(s * 100) + '%';
+  applyCtrlPos();
+}
+
+function changeSize(delta) {
+  ctrlScale = Math.min(2, Math.max(0.5, ctrlScale + delta));
+  localStorage.setItem('scramble_ctrl_scale', ctrlScale);
+  applyCtrlScale();
+}
+
+['touchstart','click'].forEach(ev => {
+  document.getElementById('size-plus') .addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); changeSize(0.1); }, { passive: false });
+  document.getElementById('size-minus').addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); changeSize(-0.1); }, { passive: false });
+});
+
 // 設定ボタン
 settingsBtn.addEventListener('touchstart', e => {
   e.preventDefault();
@@ -871,13 +1071,14 @@ settingsBtn.addEventListener('touchstart', e => {
   gameWrap.classList.toggle('ctrl-edit', editMode);
   settingsBtn.classList.toggle('active', editMode);
   settingsBtn.textContent = editMode ? '✓' : '⚙';
-  if (!editMode) applyCtrlPos(); // snap to saved
+  ctrlSizeUI.style.display = editMode ? 'flex' : 'none';
+  if (!editMode) applyCtrlPos();
 }, { passive: false });
 
 // リサイズ時に再配置
-window.addEventListener('resize', applyCtrlPos);
-// 初期配置（次フレームでcanvas.offsetWidthが確定してから）
-requestAnimationFrame(applyCtrlPos);
+window.addEventListener('resize', () => { applyCtrlScale(); applyCtrlPos(); });
+// 初期配置・サイズ適用
+requestAnimationFrame(() => { applyCtrlScale(); applyCtrlPos(); });
 
 function resizeCanvas() {
   const size = Math.min(window.innerWidth - 8, window.innerHeight * 0.58, 480);
