@@ -1,1 +1,746 @@
 
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>BLOOM — HubScription Games</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0d0b08;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      font-family: 'Courier New', monospace;
+      color: #d8ccb0;
+      overflow: hidden;
+      touch-action: none;
+      user-select: none;
+    }
+    #title-bar {
+      font-size: clamp(22px, 5vw, 36px);
+      letter-spacing: 8px;
+      color: #c8a060;
+      text-shadow: 0 0 12px #c8a06088;
+      font-weight: bold;
+      margin-bottom: 6px;
+    }
+    #hud {
+      display: flex;
+      gap: 20px;
+      margin-bottom: 8px;
+      font-size: clamp(11px, 2.5vw, 15px);
+      letter-spacing: 2px;
+    }
+    #hud span { color: #c8a060; }
+    canvas {
+      border: 2px solid #c8a060;
+      box-shadow: 0 0 18px #c8a06066, 0 0 40px #c8a06022, inset 0 0 60px #00000088;
+      display: block;
+      cursor: crosshair;
+    }
+    #message {
+      margin-top: 8px;
+      font-size: clamp(9px, 2vw, 11px);
+      color: #3a3020;
+      letter-spacing: 2px;
+    }
+  </style>
+</head>
+<body>
+  <div id="title-bar">BLOOM</div>
+  <div id="hud">
+    SCORE: <span id="score">0</span>
+    &nbsp;&nbsp;BEST: <span id="best">0</span>
+    &nbsp;&nbsp;BALLS: <span id="ballcount">0</span>
+    &nbsp;&nbsp;<button id="menu-btn" onclick="goTitle()" style="font-family:'Courier New',monospace;font-size:clamp(9px,2vw,11px);background:rgba(255,255,255,0.08);border:1px solid #555;color:#888;padding:2px 8px;border-radius:3px;cursor:pointer;letter-spacing:1px;">MENU</button>
+  </div>
+  <canvas id="c"></canvas>
+  <div id="message">drag balls · connect 3+ same color · pop!</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx    = canvas.getContext('2d');
+const scoreEl     = document.getElementById('score');
+const bestEl      = document.getElementById('best');
+const ballcountEl = document.getElementById('ballcount');
+
+// Canvas size responsive
+const SIZE = Math.min(window.innerWidth - 16, window.innerHeight * 0.78, 500);
+canvas.width = canvas.height = SIZE;
+const W = SIZE, H = SIZE;
+
+// Rainbow colors
+const COLORS = [
+  { id: 0, fill: '#ff3333', glow: '#ff000066' }, // 赤
+  { id: 1, fill: '#ff8800', glow: '#ff660066' }, // オレンジ（赤+黄）
+  { id: 2, fill: '#ffdd00', glow: '#ffcc0066' }, // 黄
+  { id: 3, fill: '#33cc33', glow: '#00aa0066' }, // 緑（青+黄）
+  { id: 4, fill: '#3388ff', glow: '#0055ff66' }, // 青
+  { id: 5, fill: '#7744dd', glow: '#5522bb66' }, // 紫（赤+青）
+  { id: 6, fill: '#ff99bb', glow: '#ff448866' }, // 桃（赤+白）
+  { id: 7, fill: '#f2f0e8', glow: '#cccccc66' }, // 白
+];
+const R = Math.floor(SIZE * 0.048); // ball radius
+const MAX_BALLS = Math.floor((W * H) / (R * R * 14));
+const SNAP_DIST = R * 2.4;
+
+let balls = [], particles = [];
+let drag  = [];
+let lastDragPos = null;
+let popFlash = null;
+let state = 'title';
+let score = 0, tick = 0, spawnTimer = 0;
+let best  = parseInt(localStorage.getItem('bloom_best') || '0');
+let spawnInterval = 180;
+bestEl.textContent = best;
+
+// ---- Ball helpers ----
+function randColor() { return COLORS[Math.floor(Math.random() * 8)]; } // 茶(8)はミックスのみ
+
+function spawnBall() {
+  const margin = R + 4;
+  let tries = 80;
+  while (tries-- > 0) {
+    const x = margin + Math.random() * (W - margin * 2);
+    const y = margin + Math.random() * (H - margin * 2);
+    let ok = true;
+    for (const b of balls) {
+      const d = dist(b.x, b.y, x, y);
+      if (d < R * 2 + 6) { ok = false; break; }
+    }
+    if (ok) {
+      balls.push({ x, y, r: R, color: randColor(), id: tick + Math.random(), scale: 0 });
+      return true;
+    }
+  }
+  return false;
+}
+
+function dist(ax, ay, bx, by) {
+  return Math.sqrt((ax-bx)**2 + (ay-by)**2);
+}
+
+// ---- Group detection (BFS) ----
+function findGroups() {
+  const visited = new Array(balls.length).fill(false);
+  const groups  = [];
+  for (let i = 0; i < balls.length; i++) {
+    if (visited[i]) continue;
+    const cid   = balls[i].color.id;
+    const group = [i];
+    const queue = [i];
+    visited[i]  = true;
+    while (queue.length) {
+      const cur = queue.shift();
+      for (let j = 0; j < balls.length; j++) {
+        if (visited[j] || balls[j].color.id !== cid) continue;
+        if (dist(balls[cur].x, balls[cur].y, balls[j].x, balls[j].y) < SNAP_DIST) {
+          visited[j] = true;
+          group.push(j);
+          queue.push(j);
+        }
+      }
+    }
+    if (group.length >= 3) groups.push(group);
+  }
+  return groups;
+}
+
+// 2色混合ルール
+const MIX_RULES = [
+  { a: 0, b: 2, result: 1 }, // 赤 + 黄 = オレンジ
+  { a: 0, b: 4, result: 5 }, // 赤 + 青 = 紫
+  { a: 4, b: 2, result: 3 }, // 青 + 黄 = 緑
+  { a: 0, b: 7, result: 6 }, // 赤 + 白 = 桃
+];
+
+function spawnMixed(indices, resultId) {
+  const cx = indices.reduce((s,i) => s + balls[i].x, 0) / indices.length;
+  const cy = indices.reduce((s,i) => s + balls[i].y, 0) / indices.length;
+  const newColor = COLORS[resultId];
+  for (let k = 0; k < 12; k++) {
+    const a = Math.random() * Math.PI * 2, s = Math.random() * 3.5 + 1;
+    particles.push({ x: cx, y: cy, vx: Math.cos(a)*s, vy: Math.sin(a)*s,
+      life: 1, decay: 0.04, size: Math.random()*4+2, color: newColor.fill });
+  }
+  const removedBalls = indices.map(i => balls[i]);
+  [...indices].sort((a,b)=>b-a).forEach(i => balls.splice(i,1));
+  const newBall = { x: Math.max(R, Math.min(W-R, cx)), y: Math.max(R, Math.min(H-R, cy)),
+    r: R, color: newColor, id: tick + Math.random(), scale: 0.8 };
+  balls.push(newBall);
+  ballcountEl.textContent = balls.length;
+  return { newBall, removedBalls };
+}
+
+// ドラッグ中の混合チェック：混合したら新しい球を指にくっつける
+function checkMixDuringDrag() {
+  if (!drag.length) return false;
+  const dragSet = new Set(drag.map(d => d.ball));
+
+  // 2色ルール
+  for (const rule of MIX_RULES) {
+    for (let di = 0; di < drag.length; di++) {
+      const db = drag[di].ball;
+      let partnerId = -1;
+      if (db.color.id === rule.a) partnerId = rule.b;
+      else if (db.color.id === rule.b) partnerId = rule.a;
+      if (partnerId === -1) continue;
+      const partner = balls.find(b => !dragSet.has(b) && b.color.id === partnerId
+                                    && dist(db.x,db.y,b.x,b.y) < SNAP_DIST);
+      if (!partner) continue;
+      const idxs = [balls.indexOf(db), balls.indexOf(partner)];
+      const { newBall, removedBalls } = spawnMixed(idxs, rule.result);
+      drag = drag.filter(d => !removedBalls.includes(d.ball));
+      drag.push({ ball: newBall });
+      return true;
+    }
+  }
+  return false;
+}
+
+function tryMix() {
+  // 2色混合
+  for (const rule of MIX_RULES) {
+    for (let i = 0; i < balls.length; i++) {
+      if (balls[i].color.id !== rule.a) continue;
+      for (let j = 0; j < balls.length; j++) {
+        if (i === j || balls[j].color.id !== rule.b) continue;
+        if (dist(balls[i].x, balls[i].y, balls[j].x, balls[j].y) < SNAP_DIST) {
+          spawnMixed([i,j], rule.result);
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function popGroups() {
+  const groups = findGroups();
+  if (!groups.length) return;
+  const toRemove = new Set();
+  groups.forEach(g => g.forEach(i => toRemove.add(i)));
+  toRemove.forEach(i => {
+    const b = balls[i];
+    for (let k = 0; k < 14; k++) {
+      const a = Math.random() * Math.PI * 2;
+      const s = Math.random() * 3.5 + 1;
+      particles.push({ x: b.x, y: b.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s,
+        life: 1, decay: Math.random()*0.03+0.02, size: Math.random()*5+2,
+        color: b.color.fill });
+    }
+  });
+  const n   = toRemove.size;
+  const mul = Math.max(1, n - 2);          // 3個=×1, 4個=×2, 5個=×3 ...
+  const pts = 50 * n * mul;
+  score += pts;
+  scoreEl.textContent = score;
+  if (score > best) { best = score; localStorage.setItem('bloom_best', best); bestEl.textContent = best; }
+
+  // ボーナスフラッシュ（4個以上）
+  if (n >= 4) {
+    const labels = ['','','','GREAT!','AWESOME!!','INSANE!!!','LEGENDARY!!!!'];
+    const label  = labels[Math.min(n, labels.length-1)] || `${n} CHAIN!!!`;
+    popFlash = { text: label, pts: `+${pts}`, timer: 90, x: W/2, y: H/2 };
+  }
+
+  balls = balls.filter((_, i) => !toRemove.has(i));
+  ballcountEl.textContent = balls.length;
+}
+
+// ---- Separation (gentle push after drop) ----
+function separate() {
+  for (let i = 0; i < balls.length; i++) {
+    for (let j = i+1; j < balls.length; j++) {
+      const dx = balls[j].x - balls[i].x;
+      const dy = balls[j].y - balls[i].y;
+      const d  = Math.sqrt(dx*dx + dy*dy) || 0.1;
+      const min = R * 2 + 2;
+      if (d < min) {
+        const push = (min - d) / 2;
+        const nx = dx/d, ny = dy/d;
+        balls[i].x -= nx * push;  balls[i].y -= ny * push;
+        balls[j].x += nx * push;  balls[j].y += ny * push;
+        // Clamp to bounds
+        [i,j].forEach(k => {
+          balls[k].x = Math.max(R, Math.min(W-R, balls[k].x));
+          balls[k].y = Math.max(R, Math.min(H-R, balls[k].y));
+        });
+      }
+    }
+  }
+}
+
+// ---- Draw ----
+function drawBall(b, highlight, nearConnect) {
+  const s = Math.min(1, b.scale || 1);
+  ctx.save();
+  ctx.translate(b.x, b.y);
+  ctx.scale(s, s);
+
+  // 繋がりそうな時は外側にリングを追加で描画
+  if (nearConnect) {
+    const pulse = 0.5 + Math.sin(tick * 0.3) * 0.5;
+    ctx.globalAlpha = pulse;
+    ctx.strokeStyle = b.color.fill;
+    ctx.lineWidth   = 3;
+    ctx.shadowColor = b.color.fill;
+    ctx.shadowBlur  = 20;
+    ctx.beginPath();
+    ctx.arc(0, 0, R + 7, 0, Math.PI*2);
+    ctx.stroke();
+    ctx.shadowBlur  = 0;
+    ctx.globalAlpha = 1;
+  }
+
+  // Glow
+  if (highlight) {
+    ctx.shadowColor = b.color.fill;
+    ctx.shadowBlur  = 22;
+  } else if (nearConnect) {
+    ctx.shadowColor = b.color.fill;
+    ctx.shadowBlur  = 16;
+  } else {
+    ctx.shadowColor = b.color.glow;
+    ctx.shadowBlur  = 10;
+  }
+
+  // Ball body（単色）
+  ctx.beginPath();
+  ctx.arc(0, 0, R, 0, Math.PI*2);
+  ctx.fillStyle = b.color.fill;
+  ctx.fill();
+
+  // 縁取り
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // 小さいシャイン（単色感を保ちつつ立体感）
+  ctx.beginPath();
+  ctx.arc(-R*0.25, -R*0.28, R*0.18, 0, Math.PI*2);
+  ctx.fillStyle = 'rgba(255,255,255,0.22)';
+  ctx.fill();
+
+  ctx.restore();
+}
+
+
+function drawConnections() {
+  for (let i = 0; i < balls.length; i++) {
+    for (let j = i+1; j < balls.length; j++) {
+      if (balls[i].color.id !== balls[j].color.id) continue;
+      const d = dist(balls[i].x, balls[i].y, balls[j].x, balls[j].y);
+      if (d < SNAP_DIST) {
+        const alpha = (1 - d / SNAP_DIST) * 0.9;
+        ctx.globalAlpha = alpha;
+        ctx.strokeStyle = balls[i].color.fill;
+        ctx.lineWidth   = 5;
+        ctx.shadowColor = balls[i].color.fill;
+        ctx.shadowBlur  = 10;
+        ctx.beginPath();
+        ctx.moveTo(balls[i].x, balls[i].y);
+        ctx.lineTo(balls[j].x, balls[j].y);
+        ctx.stroke();
+        ctx.shadowBlur  = 0;
+        ctx.globalAlpha = 1;
+      }
+    }
+  }
+}
+
+function drawGroupIndicators() {
+  const groups = findGroups();
+  for (const group of groups) {
+    // 各球に光るリング
+    const pulse = 0.6 + Math.sin(tick * 0.25) * 0.4;
+    group.forEach(i => {
+      const b = balls[i];
+      ctx.globalAlpha = pulse;
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth   = 3;
+      ctx.shadowColor = b.color.fill;
+      ctx.shadowBlur  = 18;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.r + 6, 0, Math.PI*2);
+      ctx.stroke();
+      ctx.shadowBlur  = 0;
+      ctx.globalAlpha = 1;
+    });
+
+    // グループの中心に「POP!」表示
+    const cx = group.reduce((s,i) => s + balls[i].x, 0) / group.length;
+    const cy = group.reduce((s,i) => s + balls[i].y, 0) / group.length;
+    ctx.globalAlpha = pulse;
+    ctx.fillStyle   = '#fff';
+    ctx.shadowColor = '#fff';
+    ctx.shadowBlur  = 12;
+    ctx.font        = `bold ${Math.floor(W*0.042)}px 'Courier New'`;
+    ctx.textAlign   = 'center';
+    ctx.fillText('POP!', cx, cy - R - 10);
+    ctx.shadowBlur  = 0;
+    ctx.globalAlpha = 1;
+    ctx.textAlign   = 'left';
+  }
+}
+
+function drawCapacity() {
+  const ratio = balls.length / MAX_BALLS;
+  let borderColor, glowColor;
+  if (ratio < 0.55) {
+    borderColor = '#c8a060'; glowColor = '#c8a06066';
+  } else if (ratio < 0.78) {
+    borderColor = '#ff8800'; glowColor = '#ff880099';
+  } else {
+    const blink = Math.sin(tick * 0.3) > 0;
+    borderColor = blink ? '#ff3333' : '#cc0000';
+    glowColor   = '#ff3333bb';
+  }
+
+  // 枠
+  ctx.save();
+  ctx.strokeStyle = borderColor;
+  ctx.lineWidth   = ratio >= 0.78 ? 4 : 2;
+  ctx.shadowColor = glowColor;
+  ctx.shadowBlur  = ratio >= 0.78 ? 24 : 12;
+  ctx.strokeRect(2, 2, W-4, H-4);
+  ctx.restore();
+
+  // 下部ゲージ（太め・ラベル付き）
+  const bh = 10, bw = W - 24, bx = 12, by = H - bh - 6;
+  ctx.fillStyle = '#1a1610';
+  ctx.fillRect(bx, by, bw, bh);
+  ctx.fillStyle = borderColor;
+  ctx.shadowColor = glowColor;
+  ctx.shadowBlur  = 8;
+  ctx.fillRect(bx, by, bw * ratio, bh);
+  ctx.shadowBlur = 0;
+
+  // ゲージの枠線
+  ctx.strokeStyle = '#3a3020';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(bx, by, bw, bh);
+
+  // パーセント表示
+  ctx.fillStyle = ratio >= 0.78 ? '#ff3333' : '#7a6e58';
+  ctx.font = `${Math.floor(W*0.03)}px 'Courier New'`;
+  ctx.textAlign = 'right';
+  ctx.fillText(`${Math.floor(ratio*100)}%`, W - 12, by - 3);
+  ctx.textAlign = 'left';
+
+  // 危険時の警告
+  if (ratio >= 0.78) {
+    const blink = Math.floor(tick / 18) % 2 === 0;
+    if (blink) {
+      ctx.fillStyle = '#ff3333';
+      ctx.font = `bold ${Math.floor(W*0.042)}px 'Courier New'`;
+      ctx.textAlign = 'center';
+      ctx.shadowColor = '#ff3333';
+      ctx.shadowBlur  = 14;
+      ctx.fillText('⚠ ALMOST FULL ⚠', W/2, 26);
+      ctx.shadowBlur  = 0;
+      ctx.textAlign   = 'left';
+    }
+  }
+}
+
+function drawOverlay() {
+  // Sepia vignette
+  const vg = ctx.createRadialGradient(W/2, H/2, W*0.3, W/2, H/2, W*0.72);
+  vg.addColorStop(0, 'rgba(0,0,0,0)');
+  vg.addColorStop(1, 'rgba(5,4,2,0.25)');
+  ctx.fillStyle = vg;
+  ctx.fillRect(0, 0, W, H);
+}
+
+function draw() {
+  // Background
+  ctx.fillStyle = '#0d0b08';
+  ctx.fillRect(0, 0, W, H);
+
+  // Sepia noise lines (scanline effect)
+  ctx.globalAlpha = 0.03;
+  ctx.strokeStyle = '#c8a060';
+  ctx.lineWidth = 1;
+  for (let y = 0; y < H; y += 4) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  if (state === 'playing' || state === 'gameover') {
+    drawCapacity();
+    drawConnections();
+    drawGroupIndicators();
+    const dragging = new Set(drag.map(d => d.ball));
+
+    // 繋がりそうな球を検出（SNAP_DIST内に同色がいる）
+    const nearConnect = new Set();
+    for (let i = 0; i < balls.length; i++) {
+      for (let j = i+1; j < balls.length; j++) {
+        if (balls[i].color.id !== balls[j].color.id) continue;
+        if (dist(balls[i].x, balls[i].y, balls[j].x, balls[j].y) < SNAP_DIST) {
+          nearConnect.add(i);
+          nearConnect.add(j);
+        }
+      }
+    }
+
+    for (let i = 0; i < balls.length; i++) {
+      drawBall(balls[i], dragging.has(balls[i]), nearConnect.has(i));
+    }
+    for (let i = particles.length-1; i >= 0; i--) {
+      const p = particles[i];
+      ctx.globalAlpha = p.life;
+      ctx.fillStyle   = p.color;
+      ctx.shadowColor = p.color;
+      ctx.shadowBlur  = 6;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI*2);
+      ctx.fill();
+      ctx.shadowBlur  = 0;
+      ctx.globalAlpha = 1;
+      p.x += p.vx; p.y += p.vy; p.vy += 0.06; p.life -= p.decay;
+      if (p.life <= 0) particles.splice(i, 1);
+    }
+  }
+
+  drawOverlay();
+
+  // ボーナスフラッシュ
+  if (popFlash && popFlash.timer > 0) {
+    const a = Math.min(1, popFlash.timer / 20);
+    const rise = (90 - popFlash.timer) * 0.5;
+    ctx.globalAlpha = a;
+    ctx.textAlign   = 'center';
+    ctx.fillStyle   = '#fff';
+    ctx.shadowColor = '#fff';
+    ctx.shadowBlur  = 20;
+    ctx.font = `bold ${Math.floor(W*0.1)}px 'Courier New'`;
+    ctx.fillText(popFlash.text, popFlash.x, popFlash.y - rise);
+    ctx.font = `${Math.floor(W*0.055)}px 'Courier New'`;
+    ctx.fillStyle = '#ffd700';
+    ctx.fillText(popFlash.pts, popFlash.x, popFlash.y - rise + Math.floor(W*0.11));
+    ctx.shadowBlur  = 0;
+    ctx.globalAlpha = 1;
+    ctx.textAlign   = 'left';
+    popFlash.timer--;
+  }
+
+  if (state === 'title') drawTitle();
+  if (state === 'gameover') drawGameover();
+}
+
+function drawTitle() {
+  ctx.fillStyle = 'rgba(13,11,8,0.88)';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.textAlign = 'center';
+
+  // タイトル
+  ctx.fillStyle = '#c8a060';
+  ctx.shadowColor = '#c8a06088';
+  ctx.shadowBlur = 30;
+  ctx.font = `bold ${Math.floor(W*0.13)}px 'Courier New'`;
+  ctx.fillText('BLOOM', W/2, H*0.14);
+  ctx.shadowBlur = 0;
+
+  ctx.fillStyle = '#5a5040';
+  ctx.font = `${Math.floor(W*0.034)}px 'Courier New'`;
+  ctx.fillText('connect · pop · survive', W/2, H*0.21);
+
+  // 区切り線
+  ctx.strokeStyle = '#3a3020';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(W*0.1, H*0.26); ctx.lineTo(W*0.9, H*0.26);
+  ctx.stroke();
+
+  // ルール説明
+  const fs  = Math.floor(W*0.036);
+  const fs2 = Math.floor(W*0.031);
+  const lh  = H * 0.072;
+  let y = H * 0.33;
+
+  ctx.font = `bold ${fs}px 'Courier New'`;
+  ctx.fillStyle = '#d8ccb0';
+  ctx.fillText('HOW TO PLAY', W/2, y); y += lh;
+
+  ctx.font = `${fs2}px 'Courier New'`;
+  ctx.fillStyle = '#b0a890';
+  ctx.fillText('同じ色の球を3個以上近づけると消える', W/2, y); y += lh * 0.9;
+  ctx.fillText('スワイプで同じ色をまとめて運べる', W/2, y); y += lh * 0.9;
+  ctx.fillText('多くつなぐほどボーナスアップ', W/2, y); y += lh;
+
+  // スタート
+  y += lh * 0.3;
+  ctx.fillStyle = '#c8a060';
+  ctx.shadowColor = '#c8a06066';
+  ctx.shadowBlur = 10;
+  ctx.font = `${Math.floor(W*0.038)}px 'Courier New'`;
+  const blink = Math.floor(tick / 30) % 2 === 0;
+  if (blink) ctx.fillText('— tap to start —', W/2, y);
+  ctx.shadowBlur = 0;
+  ctx.textAlign = 'left';
+}
+
+function drawGameover() {
+  ctx.fillStyle = 'rgba(13,11,8,0.78)';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#d8ccb0';
+  ctx.font = `bold ${Math.floor(W*0.09)}px 'Courier New'`;
+  ctx.fillText('GAME OVER', W/2, H*0.38);
+
+  ctx.fillStyle = '#c8a060';
+  ctx.font = `${Math.floor(W*0.05)}px 'Courier New'`;
+  ctx.fillText(`SCORE  ${score}`, W/2, H*0.5);
+
+  ctx.fillStyle = '#7a6e58';
+  ctx.font = `${Math.floor(W*0.038)}px 'Courier New'`;
+  const blink = Math.floor(tick / 30) % 2 === 0;
+  if (blink) ctx.fillText('tap to retry', W/2, H*0.64);
+
+  ctx.textAlign = 'left';
+}
+
+// ---- Update ----
+function update() {
+  tick++;
+  if (state !== 'playing') return;
+
+  // Grow-in animation
+  for (const b of balls) {
+    if ((b.scale || 0) < 1) b.scale = Math.min(1, (b.scale || 0) + 0.08);
+  }
+
+  // Spawn
+  spawnTimer++;
+  if (spawnTimer >= spawnInterval) {
+    spawnTimer = 0;
+    const ok = spawnBall();
+    if (!ok) { state = 'gameover'; return; }
+    ballcountEl.textContent = balls.length;
+    if (balls.length >= MAX_BALLS) { state = 'gameover'; return; }
+    // Speed up over time
+    spawnInterval = Math.max(45, spawnInterval - 4);
+  }
+
+  // Separate balls not being dragged
+  if (!drag.length) {
+    separate();
+    popGroups();
+  }
+}
+
+// ---- Input ----
+function getPos(e) {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = W / rect.width;
+  const scaleY = H / rect.height;
+  if (e.touches) {
+    return { x: (e.touches[0].clientX - rect.left) * scaleX,
+             y: (e.touches[0].clientY - rect.top)  * scaleY };
+  }
+  return { x: (e.clientX - rect.left) * scaleX,
+           y: (e.clientY - rect.top)  * scaleY };
+}
+
+function onStart(e) {
+  e.preventDefault();
+  if (state === 'title' || state === 'gameover') {
+    startGame();
+    return;
+  }
+  const { x, y } = getPos(e);
+
+  drag = [];
+  lastDragPos = { x, y };
+
+  for (let i = balls.length-1; i >= 0; i--) {
+    if (dist(x, y, balls[i].x, balls[i].y) <= balls[i].r * 1.3) {
+      drag.push({ ball: balls[i], ox: balls[i].x - x, oy: balls[i].y - y });
+      balls.push(balls.splice(i, 1)[0]);
+      break;
+    }
+  }
+}
+
+function onMove(e) {
+  e.preventDefault();
+  if (!drag.length) return;
+  const { x, y } = getPos(e);
+
+  // デルタ移動（最初の球を基準に全員を同量動かす）
+  const dx = x - lastDragPos.x;
+  const dy = y - lastDragPos.y;
+  lastDragPos = { x, y };
+
+  const dragging = new Set(drag.map(d => d.ball));
+
+  for (const d of drag) {
+    d.ball.x = Math.max(R, Math.min(W-R, d.ball.x + dx));
+    d.ball.y = Math.max(R, Math.min(H-R, d.ball.y + dy));
+  }
+
+  // スワイプで通過した同じ色の球だけ追加で拾う
+  const dragColorId = drag[0]?.ball.color.id;
+  for (let i = balls.length-1; i >= 0; i--) {
+    if (dragging.has(balls[i])) continue;
+    if (balls[i].color.id !== dragColorId) continue;
+    if (dist(x, y, balls[i].x, balls[i].y) <= balls[i].r * 1.4) {
+      drag.push({ ball: balls[i] });
+      dragging.add(balls[i]);
+    }
+  }
+}
+
+function onEnd(e) {
+  e.preventDefault();
+  if (!drag.length) return;
+  drag = [];
+  lastDragPos = null;
+  separate();
+  while (tryMix()) {} // リリース時のみ混合（連鎖対応）
+  popGroups();
+  ballcountEl.textContent = balls.length;
+}
+
+// マウスはdocumentで拾う（キャンバス外でもドラッグ継続）
+canvas.addEventListener('mousedown',    onStart, { passive: false });
+document.addEventListener('mousemove',  onMove,  { passive: false });
+document.addEventListener('mouseup',    onEnd,   { passive: false });
+canvas.addEventListener('touchstart',   onStart, { passive: false });
+document.addEventListener('touchmove',  onMove,  { passive: false });
+document.addEventListener('touchend',   onEnd,   { passive: false });
+
+// ---- Game flow ----
+function goTitle() {
+  state = 'title';
+  drag = [];
+}
+
+function startGame() {
+  balls = []; particles = []; drag = []; popFlash = null;
+  score = 0; tick = 0; spawnTimer = 0; spawnInterval = 180;
+  scoreEl.textContent = 0;
+  state = 'playing';
+  spawnBall();
+  ballcountEl.textContent = balls.length;
+}
+
+// ---- Loop ----
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
