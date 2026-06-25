@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>IT'S MY SEAT — HubScription Games</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body {
+      background:#111;
+      display:flex; flex-direction:column;
+      align-items:center; justify-content:center;
+      min-height:100vh;
+      font-family:'Courier New',monospace;
+      overflow:hidden; touch-action:none; user-select:none;
+      color:#ccc;
+    }
+    canvas { display:block; }
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById('c');
+const ctx    = canvas.getContext('2d');
+
+const W = Math.min(window.innerWidth,  680);
+const H = Math.floor(W * 9/16);
+canvas.width  = W; canvas.height = H;
+canvas.style.width = W+'px'; canvas.style.height = H+'px';
+
+// ── レイアウト定数 ──
+const SEATS   = 7;
+const BENCH_Y = Math.floor(H * 0.68);
+const BX1     = Math.floor(W * 0.09);
+const BX2     = Math.floor(W * 0.91);
+const SEAT_W  = (BX2 - BX1) / (SEATS - 1);
+const WIN_Y   = Math.floor(H * 0.36); // 窓を下げて人形と重なる位置に
+const WIN_H   = Math.floor(H * 0.16);
+const AD_Y    = Math.floor(H * 0.17); // HUDの下から
+const AD_H    = Math.floor(H * 0.17);
+const WIN_TOPS= [ W*0.06, W*0.28, W*0.50, W*0.72 ];
+const WIN_W   = W * 0.18;
+
+function sx(i){ return Math.floor(BX1 + i * SEAT_W); }
+
+// ── 景色スクロール ──
+let sceneX  = 0;
+let sceneSp = W * 0.008; // 常に右から左へ（進行方向固定）
+let isDaytime = true;
+let sceneryType = 'urban'; // urban | suburb | country | tunnel
+
+const BUILDINGS = [];
+for(let i=0;i<40;i++){
+  BUILDINGS.push({
+    x: i*(W*0.15)+Math.random()*W*0.05,
+    w: W*0.04+Math.random()*W*0.09,
+    h: WIN_H*(0.25+Math.random()*0.7),
+    shade: Math.floor(18+Math.random()*28),
+    type: ['urban','urban','suburb','country','country'][Math.floor(Math.random()*5)],
+  });
+}
+
+function randomizeScene(){
+  const types=['urban','urban','suburb','country','tunnel'];
+  sceneryType=types[Math.floor(Math.random()*types.length)];
+  isDaytime=Math.random()>0.35;
+}
+// ホームの柱（駅到着時に出る）
+const PLATFORM_X = W * 3;
+let platformX = PLATFORM_X;
+
+// ── 状態 ──
+let state = 'title'; // title|riding|alert|racing|result|arriving|end
+let round = 0, score = 0, tick = 0;
+let bestScore = parseInt(localStorage.getItem('ims_best')||'0');
+let waitTimer=0, alertTimer=0, resultTimer=0, arriveTimer=0;
+let cornerSide=0, playerPos=3;
+let playerX=0, targetX=0;
+let reactionMs=0, reactionStart=0;
+let won=false, roundScore=0;
+let npcs=[];
+let standAnim=0;
+let flashAlpha=0;
+let dragOnPlayer=false, touchStartX=0;
+const TOTAL_ROUNDS=7;
+
+function initRound(){
+  playerPos = 1 + Math.floor(Math.random()*5);
+  cornerSide = Math.random()<0.5 ? 0 : 6;
+  playerX = sx(playerPos); targetX = playerX;
+  won=false; reactionMs=0; roundScore=0;
+  standAnim=0; flashAlpha=0; alertTimer=0;
+  dragOnPlayer=false;
+  // 反対側の端は必ず埋める、他はランダム
+  const otherCorner = cornerSide===0 ? 6 : 0;
+  const available = [];
+  for(let i=0;i<SEATS;i++){
+    if(i===playerPos||i===cornerSide||i===otherCorner) continue;
+    available.push(i);
+  }
+  for(let i=available.length-1;i>0;i--){
+    const j=Math.floor(Math.random()*(i+1));
+    [available[i],available[j]]=[available[j],available[i]];
+  }
+  const extra=available.slice(0, 2+Math.floor(Math.random()*3)); // 最低2人追加
+  npcs=[otherCorner,...extra].map(i=>({ pos:i, x:sx(i), moving:false, arrived:false, reactFrames:0 }));
+  sceneSp = W*0.008;
+  randomizeScene();
+  state='riding';
+  waitTimer = Math.floor((2+Math.random()*2)*60);
+}
+
+function initGame(){
+  round=0; score=0;
+  platformX = PLATFORM_X;
+  initRound();
+}
+
+// ── 更新 ──
+function update(){
+  tick++;
+
+  // 景色スクロール
+  sceneX -= sceneSp;
+  if(state==='arriving'){
+    sceneSp = Math.max(0, sceneSp - W*0.0003);
+    platformX -= sceneSp;
+    arriveTimer++;
+    if(arriveTimer>140){
+      round++;
+      if(round>=TOTAL_ROUNDS){ state='end'; return; }
+      platformX = PLATFORM_X;
+      sceneSp = W*0.008;
+      initRound();
+    }
+    return;
+  }
+
+  if(state==='riding'){
+    waitTimer--;
+    if(waitTimer<=0){
+      state='alert';
+      reactionStart=performance.now();
+      flashAlpha=1;
+      // NPC反応時間を設定（隣ほど速い）
+      npcs.forEach(npc=>{
+        const dist=Math.abs(npc.pos-cornerSide);
+        // ラウンドが進むほど速くなる（round0:楽→round6:激ムズ）
+        const diffMult = 1.5 - round * 0.13; // round0:1.5x → round6:0.72x
+        npc.reactFrames=Math.floor((0.4+dist*0.12+Math.random()*0.35)*60*diffMult);
+      });
+    }
+  }
+
+  if(state==='alert'){
+    alertTimer++;
+    standAnim=Math.min(1,standAnim+0.028);
+    flashAlpha=Math.max(0,flashAlpha-0.04);
+    startNPCs();
+    if(alertTimer>180) endRound(false);
+  }
+
+  if(state==='racing'){
+    standAnim=Math.min(1,standAnim+0.028);
+    startNPCs();
+  }
+
+  if(state==='alert'||state==='racing'){
+    // NPC移動
+    npcs.forEach(npc=>{
+      if(npc.moving&&!npc.arrived){
+        const tx=sx(cornerSide);
+        const spd=W*0.013;
+        if(Math.abs(npc.x-tx)<spd){ npc.x=tx; npc.arrived=true; }
+        else npc.x+=Math.sign(tx-npc.x)*spd;
+      }
+    });
+    // プレイヤー移動
+    if(state==='racing'){
+      const spd=W*0.016;
+      const dx=targetX-playerX;
+      if(Math.abs(dx)<spd){ playerX=targetX; }
+      else playerX+=Math.sign(dx)*spd;
+      // プレイヤーがコーナーに到達
+      if(Math.abs(playerX-sx(cornerSide))<4&&Math.abs(targetX-sx(cornerSide))<4){
+        endRound(true); return;
+      }
+    }
+    // NPCが先にコーナーに到達
+    for(const npc of npcs){
+      if(npc.arrived&&Math.abs(npc.x-sx(cornerSide))<4){
+        endRound(false); return;
+      }
+    }
+  }
+
+  if(state==='result'){
+    resultTimer++;
+    if(resultTimer>150){
+      if(round+1>=TOTAL_ROUNDS) state='end'; // 最終ラウンドは到着演出なし
+      else startArrive();
+    }
+  }
+}
+
+function startNPCs(){
+  npcs.forEach(npc=>{
+    if(!npc.moving&&!npc.arrived){
+      npc.reactFrames--;
+      if(npc.reactFrames<=0) npc.moving=true;
+    }
+  });
+}
+
+function endRound(playerWon){
+  if(state==='result'||state==='arriving'||state==='end') return;
+  won=playerWon;
+  if(playerWon){
+    reactionMs=performance.now()-reactionStart;
+    roundScore=Math.max(100,Math.floor(1000-reactionMs*0.7));
+    score+=roundScore;
+  }
+  npcs.forEach(n=>{n.moving=false;});
+  state='result'; resultTimer=0;
+}
+
+function startArrive(){
+  state='arriving'; arriveTimer=0; sceneSp=W*0.008;
+}
+
+// ── 描画 ──
+function drawScene(){
+  // 天井・壁
+  ctx.fillStyle='#202020'; ctx.fillRect(0,0,W,H*0.18);
+  ctx.fillStyle='#1a1a1a'; ctx.fillRect(0,H*0.18,W,H*0.82);
+
+  // 窓の外（スクロール景色）
+  // 昼夜・景色タイプで空の色を変える
+  const SKY = {
+    day:   { urban:'#6a9ab0', country:'#88b8d0', tunnel:'#111' },
+    night: { urban:'#0a0e18', country:'#0a1020', tunnel:'#080808' },
+  };
+  const skyCol = isDaytime ? SKY.day[sceneryType]||'#6a9ab0'
+                           : SKY.night[sceneryType]||'#0a0e18';
+
+  WIN_TOPS.forEach(wx=>{
+    ctx.fillStyle=skyCol;
+    ctx.fillRect(wx, WIN_Y, WIN_W, WIN_H);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(wx, WIN_Y, WIN_W, WIN_H);
+    ctx.clip();
+
+    if(sceneryType==='tunnel'){
+      // トンネル：壁とライトだけ
+      ctx.fillStyle='#1a1a1a';
+      ctx.fillRect(wx, WIN_Y, WIN_W, WIN_H);
+      // 等間隔のトンネル照明
+      for(let li=0;li<4;li++){
+        const lx=wx+((li*WIN_W*0.28 - sceneX*0.4)%(WIN_W*1.1)+WIN_W)%WIN_W;
+        ctx.fillStyle='rgba(255,240,180,0.35)';
+        ctx.fillRect(lx-4, WIN_Y, 8, WIN_H);
+      }
+    } else if(sceneryType==='country'){
+      // 田舎：丘と木
+      const hills=[0.6,0.55,0.65,0.5,0.58];
+      ctx.fillStyle=isDaytime?'#4a6a30':'#1a2a10';
+      ctx.beginPath(); ctx.moveTo(wx, WIN_Y+WIN_H);
+      for(let i=0;i<=WIN_W;i+=8){
+        const hi=Math.floor(i/8)%5;
+        const sy=((-sceneX*0.8+i)%240+240)%240/240;
+        const hy=WIN_H*(0.45+Math.sin(sy*Math.PI*2)*0.15);
+        ctx.lineTo(wx+i, WIN_Y+hy);
+      }
+      ctx.lineTo(wx+WIN_W, WIN_Y+WIN_H); ctx.closePath(); ctx.fill();
+      // 木
+      BUILDINGS.filter(b=>b.type==='country').forEach(b=>{
+        const bx=((b.x+sceneX*1.1)%(W*6)+W*6)%(W*6)-W*0.5;
+        const tx=wx+bx-wx*0.08;
+        if(tx<wx-20||tx>wx+WIN_W+20) return;
+        ctx.fillStyle=isDaytime?'#2a4820':'#111a08';
+        ctx.fillRect(tx, WIN_Y+WIN_H*0.5, 5, WIN_H*0.4);
+        ctx.beginPath(); ctx.arc(tx+2,WIN_Y+WIN_H*0.48,12,0,Math.PI*2); ctx.fill();
+      });
+      // 地面
+      ctx.fillStyle=isDaytime?'#5a7a35':'#1e2e10';
+      ctx.fillRect(wx,WIN_Y+WIN_H*0.82,WIN_W,WIN_H*0.18);
+    } else {
+      // 都市・郊外
+      const spd=sceneryType==='suburb'?1.0:1.2;
+      BUILDINGS.forEach(b=>{
+        const bx=((b.x+sceneX*spd)%(W*6)+W*6)%(W*6)-W*0.5;
+        const bShade=isDaytime?b.shade+30:b.shade;
+        ctx.fillStyle=`rgb(${bShade},${bShade},${bShade})`;
+        ctx.fillRect(wx+bx-wx*0.08,WIN_Y+WIN_H-b.h,b.w,b.h);
+        // 窓（夜は光る）
+        if(b.w>W*0.04){
+          ctx.fillStyle=isDaytime?'rgba(200,210,220,0.2)':'rgba(255,240,160,0.55)';
+          for(let wy2=0;wy2<3;wy2++) for(let wx2=0;wx2<2;wx2++){
+            ctx.fillRect(wx+bx-wx*0.08+b.w*0.15+wx2*b.w*0.38,
+                         WIN_Y+WIN_H-b.h*0.9+wy2*b.h*0.26, b.w*0.16, b.h*0.13);
+          }
+        }
+      });
+      // 地面
+      ctx.fillStyle=isDaytime?'#3a4030':'#151810';
+      ctx.fillRect(wx,WIN_Y+WIN_H*0.84,WIN_W,WIN_H*0.16);
+      // 電柱（都市）
+      if(sceneryType==='urban'){
+        for(let pi=0;pi<3;pi++){
+          const px=wx+((pi*WIN_W*0.38+sceneX*1.5)%(WIN_W*1.1)+WIN_W*1.1)%(WIN_W*1.1);
+          ctx.fillStyle='#555';
+          ctx.fillRect(px,WIN_Y+WIN_H*0.3,3,WIN_H*0.55);
+          ctx.fillRect(px-8,WIN_Y+WIN_H*0.3,19,3);
+        }
+      }
+    }
+    // ホーム（駅到着時）
+    if(state==='arriving'||state==='result'){
+      const ph=Math.floor(platformX-wx+WIN_W*1.5);
+      if(ph>0){
+        ctx.fillStyle='#3a3a3a';
+        ctx.fillRect(wx+Math.max(0,WIN_W-ph), WIN_Y+WIN_H*0.72, Math.min(WIN_W,ph), WIN_H*0.28);
+        // ホームの柱
+        for(let ci=0;ci<4;ci++){
+          const cpx=wx+WIN_W-ph+ci*WIN_W*0.3;
+          if(cpx>=wx&&cpx<=wx+WIN_W){
+            ctx.fillStyle='#555';
+            ctx.fillRect(cpx, WIN_Y+WIN_H*0.2, WIN_W*0.04, WIN_H*0.52);
+          }
+        }
+      }
+    }
+    ctx.restore();
+    // 窓枠
+    ctx.strokeStyle='#444'; ctx.lineWidth=3;
+    ctx.strokeRect(wx, WIN_Y, WIN_W, WIN_H);
+    ctx.strokeStyle='#333'; ctx.lineWidth=1.5;
+    ctx.strokeRect(wx+4, WIN_Y+4, WIN_W-8, WIN_H-8);
+  });
+
+  // 吊り革（広告棚の下から垂れる）
+  for(let i=0;i<6;i++){
+    const hx=W*0.11+i*(W*0.78/5);
+    ctx.strokeStyle='#444'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.moveTo(hx,AD_Y+AD_H); ctx.lineTo(hx,AD_Y+AD_H+H*0.14); ctx.stroke();
+    ctx.strokeStyle='#555'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.rect(hx-7,AD_Y+AD_H+H*0.14,14,8); ctx.stroke();
+  }
+
+  // 仕切り板（端）
+  ctx.fillStyle='#2a2a2a';
+  ctx.fillRect(W*0.06, WIN_Y, W*0.02, H*0.52);
+  ctx.fillRect(W*0.92, WIN_Y, W*0.02, H*0.52);
+
+  // ベンチ
+  ctx.fillStyle='#3a3028';
+  ctx.fillRect(BX1-16, BENCH_Y, BX2-BX1+32, H*0.09);
+  ctx.strokeStyle='#555'; ctx.lineWidth=2;
+  ctx.strokeRect(BX1-16, BENCH_Y, BX2-BX1+32, H*0.09);
+  // ベンチ脚
+  ctx.fillStyle='#444';
+  ctx.fillRect(BX1-8, BENCH_Y+H*0.09, 8, H*0.12);
+  ctx.fillRect(BX2,   BENCH_Y+H*0.09, 8, H*0.12);
+
+  // 床
+  ctx.fillStyle='#1e1e1e';
+  ctx.fillRect(0, H*0.84, W, H*0.16);
+  ctx.strokeStyle='#2a2a2a'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(0,H*0.84); ctx.lineTo(W,H*0.84); ctx.stroke();
+
+  // ── 広告スペース（窓より上・荷物棚のあたり）──
+  ctx.fillStyle='#1e1e1a';
+  ctx.fillRect(0, AD_Y, W, AD_H);
+  // 荷物棚の棚板ライン
+  ctx.fillStyle='#2e2e28';
+  ctx.fillRect(0, AD_Y+AD_H-6, W, 6);
+  ctx.strokeStyle='#3a3a30'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(0,AD_Y); ctx.lineTo(W,AD_Y); ctx.stroke();
+  // 広告枠（将来ここに広告が入る）
+  const ap=W*0.025;
+  ctx.fillStyle='#282822';
+  ctx.fillRect(ap, AD_Y+6, W-ap*2, AD_H-16);
+  ctx.strokeStyle='#444'; ctx.lineWidth=1;
+  ctx.strokeRect(ap, AD_Y+6, W-ap*2, AD_H-16);
+  ctx.textAlign='left';
+}
+
+// ── 棒人間描画（全員同じポーズ：立ち気味で膝だけ少し曲げる）──
+function drawPerson(x, blink, col, mode, standR){
+  const c=col||'#aaa';
+  ctx.strokeStyle=c; ctx.fillStyle=c;
+  ctx.lineWidth=Math.max(2,W*0.004); ctx.lineCap='round';
+
+  const hr=Math.floor(W*0.022);
+  const bh=Math.floor(H*0.13);
+  const lh=Math.floor(H*0.10);
+
+  // 立ち上がりアニメ（端の人が立つとき）
+  if(mode==='stand'){
+    // X軸方向（壁側）にフェードアウト
+    const slideDir = cornerSide===0 ? -1 : 1;
+    const slideX = x + slideDir * standR * W * 0.18;
+    ctx.globalAlpha = Math.max(0, 1 - standR*1.3);
+    const hy=BENCH_Y-hr*2-bh*0.1;
+    const sx2=slideX;
+    ctx.beginPath(); ctx.arc(sx2,hy,hr,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(sx2,hy+hr); ctx.lineTo(sx2,hy+hr+bh); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(sx2,hy+hr+bh*0.3); ctx.lineTo(sx2-hr*2,hy+hr+bh*0.7); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(sx2,hy+hr+bh*0.3); ctx.lineTo(sx2+hr*2,hy+hr+bh*0.7); ctx.stroke();
+    const kx=hr*0.9, ky=lh*0.55;
+    ctx.beginPath(); ctx.moveTo(sx2,hy+hr+bh); ctx.lineTo(sx2-kx,hy+hr+bh+ky); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(sx2,hy+hr+bh); ctx.lineTo(sx2+kx,hy+hr+bh+ky); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(sx2-kx,hy+hr+bh+ky); ctx.lineTo(sx2-kx,H*0.84); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(sx2+kx,hy+hr+bh+ky); ctx.lineTo(sx2+kx,H*0.84); ctx.stroke();
+    ctx.globalAlpha=1;
+    return;
+  }
+
+  if(blink&&Math.floor(tick/8)%2===0) return;
+
+  // 全員共通ポーズ：立ち気味、膝だけわずかに曲げる
+  const hy=BENCH_Y-hr*2-bh*0.1;
+  // 頭
+  ctx.beginPath(); ctx.arc(x,hy,hr,0,Math.PI*2); ctx.fill();
+  // 体
+  ctx.beginPath(); ctx.moveTo(x,hy+hr); ctx.lineTo(x,hy+hr+bh); ctx.stroke();
+  // 腕（自然に下げる）
+  ctx.beginPath(); ctx.moveTo(x,hy+hr+bh*0.25); ctx.lineTo(x-hr*2,hy+hr+bh*0.75); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x,hy+hr+bh*0.25); ctx.lineTo(x+hr*2,hy+hr+bh*0.75); ctx.stroke();
+  // 脚（ヒップから少し外向き→膝でわずかに曲がる）
+  const kx=hr*0.9, ky=lh*0.55; // 膝の位置
+  ctx.beginPath(); ctx.moveTo(x,hy+hr+bh); ctx.lineTo(x-kx,hy+hr+bh+ky); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x,hy+hr+bh); ctx.lineTo(x+kx,hy+hr+bh+ky); ctx.stroke();
+  // 膝から下（真っ直ぐ下へ）
+  ctx.beginPath(); ctx.moveTo(x-kx,hy+hr+bh+ky); ctx.lineTo(x-kx,H*0.84); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x+kx,hy+hr+bh+ky); ctx.lineTo(x+kx,H*0.84); ctx.stroke();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  drawScene();
+
+  // フラッシュ
+  if(flashAlpha>0){
+    ctx.fillStyle=`rgba(255,220,60,${flashAlpha*0.35})`;
+    ctx.fillRect(0,0,W,H);
+  }
+
+  // NPC描画（全員同じポーズ）
+  npcs.forEach(npc=>{
+    drawPerson(npc.x, false, '#888', 'sit', 0);
+  });
+
+  // 端の人（立ち上がり中）
+  if((state==='riding'||state==='alert'||state==='racing')&&standAnim<1){
+    drawPerson(sx(cornerSide), false, '#666', 'stand', standAnim);
+  }
+
+  // プレイヤー（白・待機中点滅）
+  const pBlink=(state==='riding');
+  drawPerson(playerX, pBlink, '#fff', 'sit', 0);
+
+  // 矢印ガイド
+  if(state==='alert'||state==='racing'){
+    const cx=sx(cornerSide);
+    const ay=BENCH_Y-H*0.25;
+    const pulse=0.6+Math.sin(tick*0.25)*0.4;
+    ctx.fillStyle=`rgba(255,210,40,${pulse})`;
+    ctx.font=`bold ${Math.floor(H*0.14)}px sans-serif`;
+    ctx.textAlign='center';
+    ctx.fillText(cornerSide===0?'←':'→', cx, ay);
+    ctx.fillStyle=`rgba(255,255,255,${pulse*0.9})`;
+    ctx.font=`bold ${Math.floor(H*0.055)}px Courier New`;
+    ctx.fillText('空いた！', cx, ay-H*0.13);
+    // プレイヤーへの指示
+    ctx.fillStyle=`rgba(255,220,80,${pulse*0.7})`;
+    ctx.font=`${Math.floor(H*0.045)}px Courier New`;
+    ctx.fillText('← タップで移動 →', W/2, H*0.92);
+    ctx.textAlign='left';
+  }
+
+  // HUD
+  drawHUD();
+  if(state==='title')    drawTitle();
+  if(state==='result')   drawResult();
+  if(state==='arriving') drawArriving();
+  if(state==='end')      drawEnd();
+}
+
+function drawHUD(){
+  ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(0,0,W,H*0.17);
+  // ラウンド（左）
+  ctx.fillStyle='#bbb'; ctx.font=`bold ${Math.floor(H*0.07)}px Courier New`;
+  ctx.textAlign='left';
+  ctx.fillText(`${round+1}/${TOTAL_ROUNDS}`, W*0.04, H*0.12);
+  // スコア・ベスト（右・2段）
+  ctx.textAlign='right';
+  ctx.fillStyle='#bbb'; ctx.font=`bold ${Math.floor(H*0.055)}px Courier New`;
+  ctx.fillText(`${score}pt`, W*0.96, H*0.09);
+  ctx.fillStyle='#555'; ctx.font=`${Math.floor(H*0.04)}px Courier New`;
+  ctx.fillText(`BEST ${bestScore}`, W*0.96, H*0.145);
+  ctx.textAlign='center';
+  ctx.fillStyle='#666'; ctx.font=`${Math.floor(H*0.04)}px Courier New`;
+  ctx.fillText("IT'S MY SEAT", W/2, H*0.10);
+  // MENUボタン（左下）
+  ctx.fillStyle='#1a1a1a'; ctx.fillRect(W*0.02, H*0.90, W*0.18, H*0.07);
+  ctx.strokeStyle='#444'; ctx.lineWidth=1; ctx.strokeRect(W*0.02, H*0.90, W*0.18, H*0.07);
+  ctx.fillStyle='#666'; ctx.font=`${Math.floor(H*0.038)}px Courier New`;
+  ctx.textAlign='center';
+  ctx.fillText('MENU', W*0.11, H*0.947);
+  ctx.textAlign='left';
+}
+
+let showHow = false;
+
+function drawTitle(){
+  ctx.fillStyle='rgba(0,0,0,0.88)'; ctx.fillRect(0,0,W,H);
+  ctx.textAlign='center';
+  ctx.fillStyle='#fff'; ctx.font=`bold ${Math.floor(H*0.12)}px Courier New`;
+  ctx.fillText("IT'S MY SEAT", W/2, H*0.22);
+
+  if(showHow){
+    // ルール説明
+    ctx.fillStyle='rgba(20,20,20,0.95)'; ctx.fillRect(W*0.04,H*0.28,W*0.92,H*0.64);
+    ctx.strokeStyle='#555'; ctx.lineWidth=1; ctx.strokeRect(W*0.04,H*0.28,W*0.92,H*0.64);
+    ctx.fillStyle='#fff'; ctx.font=`bold ${Math.floor(H*0.055)}px Courier New`;
+    ctx.fillText('HOW TO PLAY', W/2, H*0.37);
+    ctx.fillStyle='#bbb'; ctx.font=`${Math.floor(H*0.042)}px Courier New`;
+    const rules=[
+      '端の席が空いたら素早く移動！',
+      '自分の左側タップ → 左に移動',
+      '自分の右側タップ → 右に移動',
+      '隣の乗客も同時に狙ってくる',
+      '反応が速いほど高得点！',
+      `全${TOTAL_ROUNDS}ラウンドのスコアを競え`,
+    ];
+    rules.forEach((r,i)=>ctx.fillText(r, W/2, H*0.455+i*H*0.058));
+    ctx.fillStyle='#555'; ctx.font=`${Math.floor(H*0.038)}px Courier New`;
+    ctx.fillText('— タップで閉じる —', W/2, H*0.89);
+  } else {
+    ctx.fillStyle='#aaa'; ctx.font=`${Math.floor(H*0.05)}px Courier New`;
+    ctx.fillText('端の席を素早く確保せよ！', W/2, H*0.42);
+    ctx.fillStyle='#555'; ctx.font=`${Math.floor(H*0.045)}px Courier New`;
+    ctx.fillText(`BEST  ${bestScore}pt`, W/2, H*0.55);
+    if(Math.floor(tick/28)%2===0){
+      ctx.fillStyle='#fff'; ctx.font=`bold ${Math.floor(H*0.055)}px Courier New`;
+      ctx.fillText('— タップでスタート —', W/2, H*0.72);
+    }
+    // HOW TO PLAYボタン
+    ctx.fillStyle='#222'; ctx.fillRect(W*0.28,H*0.83,W*0.44,H*0.09);
+    ctx.strokeStyle='#666'; ctx.lineWidth=1; ctx.strokeRect(W*0.28,H*0.83,W*0.44,H*0.09);
+    ctx.fillStyle='#999'; ctx.font=`bold ${Math.floor(H*0.048)}px Courier New`;
+    ctx.fillText('？ HOW TO PLAY', W/2, H*0.887);
+  }
+  ctx.textAlign='left';
+}
+
+function drawResult(){
+  ctx.textAlign='center';
+  if(won){
+    ctx.fillStyle='rgba(255,200,0,0.88)'; ctx.font=`bold ${Math.floor(H*0.12)}px Courier New`;
+    ctx.fillText('取った！', W/2, H*0.46);
+    ctx.fillStyle='#fff'; ctx.font=`${Math.floor(H*0.055)}px Courier New`;
+    ctx.fillText(`反応 ${(reactionMs/1000).toFixed(2)}s`, W/2, H*0.62);
+    ctx.fillText(`+${roundScore}pt`, W/2, H*0.74);
+  } else {
+    ctx.fillStyle='rgba(180,60,60,0.88)'; ctx.font=`bold ${Math.floor(H*0.12)}px Courier New`;
+    ctx.fillText('負けた…', W/2, H*0.46);
+    ctx.fillStyle='#888'; ctx.font=`${Math.floor(H*0.055)}px Courier New`;
+    ctx.fillText('先を越された', W/2, H*0.64);
+  }
+  ctx.textAlign='left';
+}
+
+function drawArriving(){
+  ctx.textAlign='center';
+  ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(0,H*0.36,W,H*0.28);
+  ctx.fillStyle='#bbb'; ctx.font=`bold ${Math.floor(H*0.06)}px Courier New`;
+  ctx.fillText('次の駅に到着します', W/2, H*0.52);
+  if(sceneSp<0.001&&arriveTimer>60){
+    ctx.fillStyle='#888'; ctx.font=`${Math.floor(H*0.045)}px Courier New`;
+    ctx.fillText('ドアが開きます', W/2, H*0.64);
+  }
+  ctx.textAlign='left';
+}
+
+function drawEnd(){
+  if(score>bestScore){ bestScore=score; localStorage.setItem('ims_best',bestScore); }
+  ctx.fillStyle='rgba(0,0,0,0.90)'; ctx.fillRect(0,0,W,H);
+  ctx.textAlign='center';
+  ctx.fillStyle='#fff'; ctx.font=`bold ${Math.floor(H*0.1)}px Courier New`;
+  ctx.fillText('終点です', W/2, H*0.25);
+  ctx.fillStyle='#ffe050'; ctx.font=`bold ${Math.floor(H*0.09)}px Courier New`;
+  ctx.fillText(`SCORE  ${score}`, W/2, H*0.44);
+  ctx.fillStyle='#888'; ctx.font=`${Math.floor(H*0.055)}px Courier New`;
+  ctx.fillText(`BEST  ${bestScore}`, W/2, H*0.57);
+  if(Math.floor(tick/28)%2===0){
+    ctx.fillStyle='#bbb'; ctx.font=`bold ${Math.floor(H*0.055)}px Courier New`;
+    ctx.fillText('— もう一度乗る —', W/2, H*0.76);
+  }
+  ctx.textAlign='left';
+}
+
+// ── 入力 ──
+function doSwipe(dir){
+  // 方向とコーナーが一致するときだけ反応
+  const correctDir = (dir===-1 && cornerSide===0) || (dir===1 && cornerSide===6);
+  if(!correctDir) return;
+  if(state==='alert'){
+    reactionMs=performance.now()-reactionStart;
+    state='racing';
+  }
+  if(state!=='racing') return;
+  targetX=sx(cornerSide);
+}
+
+function playerHitTest(clientX, clientY){
+  const rect=canvas.getBoundingClientRect();
+  const cx=(clientX-rect.left)*(W/rect.width);
+  const cy=(clientY-rect.top)*(H/rect.height);
+  return Math.abs(cx-playerX)<W*0.07 && Math.abs(cy-BENCH_Y)<H*0.22;
+}
+
+// キーボード
+document.addEventListener('keydown',e=>{
+  if(e.key===' '||e.key==='Enter'){e.preventDefault();
+    if(state==='title'||state==='end') initGame();
+  }
+  if(e.key==='ArrowLeft'||e.key==='a') doSwipe(-1);
+  if(e.key==='ArrowRight'||e.key==='d') doSwipe(1);
+});
+
+// タッチ（左半分タップ→左、右半分タップ→右）
+canvas.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  const t=e.touches[0];
+  const rect=canvas.getBoundingClientRect();
+  const cx=(t.clientX-rect.left)*(W/rect.width);
+  const cy=(t.clientY-rect.top)*(H/rect.height);
+  if(state==='title'||state==='end'){
+    if(showHow){ showHow=false; return; }
+    // HOW TO PLAYボタン
+    if(cx>=W*0.28&&cx<=W*0.72&&cy>=H*0.83&&cy<=H*0.92){ showHow=true; return; }
+    initGame(); return;
+  }
+  // MENUボタン（プレイ中）
+  if(cx>=W*0.02&&cx<=W*0.20&&cy>=H*0.90&&cy<=H*0.97){ state='title'; showHow=false; return; }
+  doSwipe(cx < playerX ? -1 : 1);
+},{passive:false});
+
+canvas.addEventListener('touchend',e=>{ e.preventDefault(); },{passive:false});
+
+// クリック（左半分→左、右半分→右）
+canvas.addEventListener('click',e=>{
+  const rect=canvas.getBoundingClientRect();
+  const cx=(e.clientX-rect.left)*(W/rect.width);
+  const cy=(e.clientY-rect.top)*(H/rect.height);
+  if(state==='title'||state==='end'){
+    if(showHow){ showHow=false; return; }
+    if(cx>=W*0.28&&cx<=W*0.72&&cy>=H*0.83&&cy<=H*0.92){ showHow=true; return; }
+    initGame(); return;
+  }
+  if(cx>=W*0.02&&cx<=W*0.20&&cy>=H*0.90&&cy<=H*0.97){ state='title'; showHow=false; return; }
+  doSwipe(cx < playerX ? -1 : 1);
+});
+
+// ── メインループ ──
+function loop(){
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
