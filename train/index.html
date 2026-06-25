@@ -648,8 +648,8 @@ document.addEventListener('keydown',e=>{
 // タッチ（左半分タップ→左、右半分タップ→右）
 // canvas外（黒い部分）もタップを拾うためdocumentに登録
 document.addEventListener('touchstart',e=>{
-  // HUBボタン等のリンクは除外
-  if(e.target.tagName==='A') return;
+  // HUBボタン等は除外
+  if(e.target.tagName==='A'||e.target.tagName==='BUTTON') return;
   e.preventDefault();
   const t=e.touches[0];
   const rect=canvas.getBoundingClientRect();
@@ -692,6 +692,6 @@ function loop(){
 loop();
 </script>
   
-  <a href="../" style="position:fixed;top:10px;right:10px;font-family:Courier New,monospace;font-size:13px;font-weight:bold;color:#ccc;background:rgba(0,0,0,0.7);border:1px solid #666;padding:6px 14px;border-radius:6px;text-decoration:none;letter-spacing:1px;z-index:9999;">HUB</a>
+  <button onclick="location.href='../'" ontouchend="location.href='../'" style="position:fixed;top:10px;left:10px;font-family:'Courier New',monospace;font-size:13px;font-weight:bold;color:#ccc;background:rgba(0,0,0,0.7);border:1px solid #666;padding:6px 14px;border-radius:6px;cursor:pointer;letter-spacing:1px;z-index:9999;touch-action:auto;">HUB</button>
 </body>
 </html>
