@@ -24,7 +24,8 @@
 const canvas = document.getElementById('c');
 const ctx    = canvas.getContext('2d');
 
-// 横向き時は高さ基準で大きく表示
+// 横向き時は高さ基準で大きく、DPR対応で高解像度に
+const DPR = window.devicePixelRatio || 1;
 const isLandscape = window.innerWidth > window.innerHeight;
 let W, H;
 if(isLandscape){
@@ -35,8 +36,11 @@ if(isLandscape){
   W = Math.min(window.innerWidth, 680);
   H = Math.floor(W * 9/16);
 }
-canvas.width  = W; canvas.height = H;
-canvas.style.width = W+'px'; canvas.style.height = H+'px';
+canvas.width  = W * DPR;
+canvas.height = H * DPR;
+canvas.style.width  = W + 'px';
+canvas.style.height = H + 'px';
+ctx.scale(DPR, DPR);
 
 // ── レイアウト定数 ──
 const SEATS   = 7;
@@ -644,6 +648,8 @@ document.addEventListener('keydown',e=>{
 // タッチ（左半分タップ→左、右半分タップ→右）
 // canvas外（黒い部分）もタップを拾うためdocumentに登録
 document.addEventListener('touchstart',e=>{
+  // HUBボタン等のリンクは除外
+  if(e.target.tagName==='A') return;
   e.preventDefault();
   const t=e.touches[0];
   const rect=canvas.getBoundingClientRect();
