@@ -1,1 +1,608 @@
 
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>棒人間オセロ — HubScription Games</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body {
+      background:#1a1f14;
+      display:flex; flex-direction:column;
+      align-items:center; justify-content:center;
+      min-height:100vh;
+      font-family:'Courier New',monospace;
+      color:#d8ccb0;
+      overflow:hidden; touch-action:none; user-select:none;
+    }
+    canvas { display:block; }
+    #sub { font-size:10px; letter-spacing:3px; color:#3a3020; margin-bottom:4px; }
+  </style>
+</head>
+<body>
+<div id="sub">HUBSCRIPTION GAMES</div>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById('c');
+const ctx    = canvas.getContext('2d');
+const W = 400, H = 680;
+canvas.width = W; canvas.height = H;
+const sc = Math.min(1, Math.min(window.innerWidth/W, window.innerHeight*.95/H));
+canvas.style.width  = Math.floor(W*sc)+'px';
+canvas.style.height = Math.floor(H*sc)+'px';
+
+// ── オセロ定数 ──
+const EMPTY=0, BLACK=1, WHITE=2;
+const CELL=44, BX=(W-CELL*8)/2, BY=124;
+const DIRS=[[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
+
+// ── 状態 ──
+let state='title'; // title|playing|gameover
+let mode=null;     // '2p'|'cpu'
+let board, cur, blocked, moveCount, cpuTimer, tick=0;
+let interferers=[], nextInterfer=0, interTurn=0;
+let msg=null, flash=0;
+let playerColor=BLACK; // ランダムで毎回変わる
+let lastFlipped=[]; // 直前にひっくり返ったマス {r,c,timer}
+
+function rand(a,b){ return Math.floor(Math.random()*(b-a+1))+a; }
+function showMsg(t,d=100){ msg={text:t,timer:d}; }
+
+// ── ゲームロジック ──
+function initGame(m){
+  mode=m;
+  // プレイヤーの色をランダムに決定
+  playerColor = Math.random()<0.5 ? BLACK : WHITE;
+  board=Array.from({length:8},()=>Array(8).fill(EMPTY));
+  board[3][3]=WHITE; board[3][4]=BLACK;
+  board[4][3]=BLACK; board[4][4]=WHITE;
+  cur=BLACK; blocked=new Set();
+  moveCount=0; interferers=[]; interTurn=0; nextInterfer=rand(4,7);
+  cpuTimer=0; msg=null; flash=0;
+  state='playing';
+}
+
+function opp(p){ return p===BLACK?WHITE:BLACK; }
+
+function flipsInDir(r,c,p,dr,dc){
+  const o=opp(p); const res=[];
+  let nr=r+dr, nc=c+dc;
+  while(nr>=0&&nr<8&&nc>=0&&nc<8&&board[nr][nc]===o){
+    res.push([nr,nc]); nr+=dr; nc+=dc;
+  }
+  // 終点もブロックされていたら挟みとして使えない
+  if(res.length&&nr>=0&&nr<8&&nc>=0&&nc<8&&board[nr][nc]===p
+     &&!blocked.has(`${nr},${nc}`)) return res;
+  return [];
+}
+
+function validFlips(r,c,p){
+  if(board[r][c]!==EMPTY) return [];
+  if(blocked.has(`${r},${c}`)) return [];
+  const all=[];
+  for(const[dr,dc]of DIRS) all.push(...flipsInDir(r,c,p,dr,dc));
+  return all;
+}
+
+function getValidMoves(p){
+  const moves=[];
+  for(let r=0;r<8;r++) for(let c=0;c<8;c++)
+    if(validFlips(r,c,p).length) moves.push([r,c]);
+  return moves;
+}
+
+function placeAt(r,c,p){
+  const flips=validFlips(r,c,p);
+  if(!flips.length) return false;
+  board[r][c]=p;
+  flips.forEach(([fr,fc])=>board[fr][fc]=p);
+  // ひっくり返ったマスを記録
+  lastFlipped=flips.map(([fr,fc])=>({r:fr,c:fc,timer:30}));
+  flash=12;
+  moveCount++;
+  interTurn++;
+  // シッターのカウントダウン・解放
+  interferers.forEach(f=>{ if(f.type==='sitter') f.sitLeft--; });
+  tickSitters();
+  if(interTurn>=nextInterfer){ interTurn=0; nextInterfer=rand(4,7); spawnInterferer(); }
+  return true;
+}
+
+function countPieces(p){ let n=0; for(let r=0;r<8;r++) for(let c=0;c<8;c++) if(board[r][c]===p) n++; return n; }
+
+function checkEnd(){
+  const bm=getValidMoves(BLACK), wm=getValidMoves(WHITE);
+  if(!bm.length&&!wm.length){ state='gameover'; return true; }
+  return false;
+}
+
+function nextTurn(){
+  if(checkEnd()) return;
+  cur=opp(cur);
+  const vm=getValidMoves(cur);
+  if(!vm.length){
+    showMsg(`${cur===BLACK?'●黒':'○白'}は置けないのでパス！`,80);
+    cur=opp(cur);
+    if(!getValidMoves(cur).length){ state='gameover'; }
+  } else {
+    if(mode==='cpu'&&cur!==playerColor) cpuTimer=rand(90,150); // CPUが考えるふり
+  }
+}
+
+// ── CPU AI（コーナー優先＋最多裏返し） ──
+function cpuMove(){
+  const moves=getValidMoves(WHITE);
+  if(!moves.length){ nextTurn(); return; }
+  const corners=moves.filter(([r,c])=>(r===0||r===7)&&(c===0||c===7));
+  if(corners.length){ const[r,c]=corners[0]; placeAt(r,c,WHITE); nextTurn(); return; }
+  const edges=moves.filter(([r,c])=>r===0||r===7||c===0||c===7);
+  const pool=edges.length?edges:moves;
+  let best=null,bestN=0;
+  for(const[r,c]of pool){
+    const n=validFlips(r,c,WHITE).length;
+    if(n>bestN){ bestN=n; best=[r,c]; }
+  }
+  if(!best) best=moves[rand(0,moves.length-1)];
+  placeAt(best[0],best[1],WHITE);
+  nextTurn();
+}
+
+// ── 棒人間の賢い妨害位置選択 ──
+function getSmartTarget(targetPlayer){
+  // コーナー最優先
+  const corners=[[0,0],[0,7],[7,0],[7,7]];
+  for(const[r,c]of corners){
+    if(!blocked.has(`${r},${c}`)&&validFlips(r,c,targetPlayer).length>0)
+      return[r,c];
+  }
+  // エッジで最多裏返し
+  const moves=getValidMoves(targetPlayer).filter(([r,c])=>!blocked.has(`${r},${c}`));
+  if(!moves.length) return null;
+  const edgeMoves=moves.filter(([r,c])=>r===0||r===7||c===0||c===7);
+  const pool=edgeMoves.length?edgeMoves:moves;
+  return pool.reduce((best,cur)=>
+    validFlips(cur[0],cur[1],targetPlayer).length >
+    validFlips(best[0],best[1],targetPlayer).length ? cur : best
+  );
+}
+
+// ── 棒人間妨害システム ──
+function spawnInterferer(){
+  const type=Math.random()<0.55?'runner':'sitter';
+  if(type==='runner'){
+    // 駒がある行のみ選ぶ
+    const rowsWithPieces=[];
+    for(let r=0;r<8;r++) for(let c=0;c<8;c++) if(board[r][c]!==EMPTY){ rowsWithPieces.push(r); break; }
+    if(!rowsWithPieces.length) return;
+    const row=rowsWithPieces[rand(0,rowsWithPieces.length-1)];
+    const fromLeft=Math.random()<0.5;
+    // CPU対戦：プレイヤーの駒を優先的に狙う（コーナー→エッジ→中央の順）
+    let flipCol=-1;
+    if(mode==='cpu'){
+      const corners=[0,7];
+      const edges=[1,2,3,4,5,6];
+      const playerCols=corners.filter(c=>board[row][c]===playerColor);
+      if(playerCols.length){
+        flipCol=playerCols[rand(0,playerCols.length-1)];
+      } else {
+        const edgeCols=edges.filter(c=>board[row][c]===playerColor);
+        if(edgeCols.length){
+          flipCol=edgeCols[rand(0,edgeCols.length-1)];
+        } else {
+          const anyCols=[];
+          for(let c=0;c<8;c++) if(board[row][c]===playerColor) anyCols.push(c);
+          if(anyCols.length) flipCol=anyCols[rand(0,anyCols.length-1)];
+        }
+      }
+    } else {
+      // 2人対戦：ランダム
+      const targets=[];
+      for(let c=0;c<8;c++) if(board[row][c]!==EMPTY) targets.push(c);
+      if(targets.length) flipCol=targets[rand(0,targets.length-1)];
+    }
+    interferers.push({
+      type:'runner', row,
+      x: fromLeft ? BX-32 : BX+CELL*8+32,
+      vx: fromLeft ? 6 : -6,
+      y: BY+row*CELL+CELL/2,
+      flipCol, flipped:false,
+      active:true, t:0
+    });
+    showMsg('棒人間が乱入！',60);
+  } else {
+    // 次のプレイヤーが打ちたい場所を妨害
+    // CPU対戦ではプレイヤーが打ちたい場所を妨害、2人対戦はランダム寄り
+    const target=getSmartTarget(mode==='cpu' ? playerColor : opp(cur));
+    let r,c;
+    if(target){ [r,c]=target; }
+    else {
+      const candidates=[];
+      for(let rr=0;rr<8;rr++) for(let cc=0;cc<8;cc++)
+        if(!blocked.has(`${rr},${cc}`)) candidates.push([rr,cc]);
+      if(!candidates.length) return;
+      [r,c]=candidates[rand(0,candidates.length-1)];
+    }
+    const key=`${r},${c}`;
+    blocked.add(key);
+    interferers.push({
+      type:'sitter', row:r, col:c,
+      x:BX+c*CELL+CELL/2, y:BY+r*CELL+CELL/2,
+      sitLeft:3, active:true, t:0
+    });
+    showMsg('棒人間が駒の上に座った！',60);
+  }
+}
+
+// 妨害キャラをターン経過で更新（sitter用）
+function tickSitters(){
+  interferers=interferers.filter(f=>{
+    if(f.type==='sitter'){
+      if(f.sitLeft<=0){ blocked.delete(`${f.row},${f.col}`); return false; }
+    }
+    return true;
+  });
+}
+
+// ── 描画 ──
+// 棒人間描画
+function drawStick(x,y,s=1,t=0,col='#eee'){
+  const w=t*0.4;
+  ctx.strokeStyle=col; ctx.fillStyle=col;
+  ctx.lineWidth=2*s; ctx.lineCap='round';
+  // 頭
+  ctx.beginPath(); ctx.arc(x,y-18*s,6*s,0,Math.PI*2); ctx.fill();
+  // 体
+  ctx.beginPath(); ctx.moveTo(x,y-12*s); ctx.lineTo(x,y+4*s); ctx.stroke();
+  // 腕（走りアニメ）
+  const sw=Math.sin(t*0.3)*10*s;
+  ctx.beginPath(); ctx.moveTo(x,y-8*s); ctx.lineTo(x-8*s+sw,y-2*s); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x,y-8*s); ctx.lineTo(x+8*s-sw,y-2*s); ctx.stroke();
+  // 脚
+  const lw=Math.sin(t*0.3)*8*s;
+  ctx.beginPath(); ctx.moveTo(x,y+4*s); ctx.lineTo(x-6*s+lw,y+16*s); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x,y+4*s); ctx.lineTo(x+6*s-lw,y+16*s); ctx.stroke();
+}
+
+function drawSitterStick(x,y,s=1,t=0,col='#eee'){
+  ctx.strokeStyle=col; ctx.fillStyle=col;
+  ctx.lineWidth=2*s; ctx.lineCap='round';
+  // 座ってる姿勢
+  ctx.beginPath(); ctx.arc(x,y-14*s,6*s,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(x,y-8*s); ctx.lineTo(x,y+2*s); ctx.stroke();
+  // 腕を広げてドヤ顔
+  const blink=Math.floor(t/20)%2;
+  ctx.beginPath(); ctx.moveTo(x,y-5*s); ctx.lineTo(x-12*s,y-10*s+blink*2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x,y-5*s); ctx.lineTo(x+12*s,y-10*s-blink*2); ctx.stroke();
+  // 曲げた脚（座り）
+  ctx.beginPath(); ctx.moveTo(x,y+2*s); ctx.lineTo(x-8*s,y+10*s); ctx.lineTo(x-6*s,y+18*s); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x,y+2*s); ctx.lineTo(x+8*s,y+10*s); ctx.lineTo(x+6*s,y+18*s); ctx.stroke();
+}
+
+function drawBoard(){
+  // 盤面外枠
+  ctx.fillStyle='#3a5a30';
+  ctx.fillRect(BX-4,BY-4,CELL*8+8,CELL*8+8);
+
+  // マス（緑系で明るく）
+  for(let r=0;r<8;r++){
+    for(let c=0;c<8;c++){
+      const x=BX+c*CELL, y=BY+r*CELL;
+      ctx.fillStyle=(r+c)%2===0?'#2d5228':'#265022';
+      ctx.fillRect(x,y,CELL,CELL);
+      ctx.strokeStyle='#3a6832'; ctx.lineWidth=1;
+      ctx.strokeRect(x,y,CELL,CELL);
+
+      // ブロック中のマス（赤く強調）
+      if(blocked.has(`${r},${c}`)){
+        ctx.fillStyle='rgba(220,60,60,0.35)';
+        ctx.fillRect(x,y,CELL,CELL);
+      }
+    }
+  }
+
+  // 星点（オセロの慣例の4点）
+  [[2,2],[2,6],[6,2],[6,6]].forEach(([r,c])=>{
+    ctx.fillStyle='#4a7a40';
+    ctx.beginPath();
+    ctx.arc(BX+c*CELL+CELL/2, BY+r*CELL+CELL/2, 4, 0, Math.PI*2);
+    ctx.fill();
+  });
+
+  // 有効手ヒント
+  if(state==='playing'){
+    const vm=getValidMoves(cur);
+    vm.forEach(([r,c])=>{
+      const x=BX+c*CELL+CELL/2, y=BY+r*CELL+CELL/2;
+      ctx.fillStyle='rgba(240,230,80,0.45)';
+      ctx.beginPath(); ctx.arc(x,y,CELL*0.22,0,Math.PI*2); ctx.fill();
+    });
+  }
+
+  // 駒
+  for(let r=0;r<8;r++){
+    for(let c=0;c<8;c++){
+      if(!board[r][c]) continue;
+      const x=BX+c*CELL+CELL/2, y=BY+r*CELL+CELL/2;
+      const isB=board[r][c]===BLACK;
+      // 影
+      ctx.fillStyle='rgba(0,0,0,0.35)';
+      ctx.beginPath(); ctx.ellipse(x+2,y+4,CELL*0.38,CELL*0.13,0,0,Math.PI*2); ctx.fill();
+      // 本体
+      ctx.fillStyle=isB?'#111':'#f0f0f0';
+      ctx.beginPath(); ctx.arc(x,y,CELL*0.4,0,Math.PI*2); ctx.fill();
+      ctx.strokeStyle=isB?'#555':'#ccc'; ctx.lineWidth=2;
+      ctx.stroke();
+      // 光沢
+      ctx.fillStyle=isB?'rgba(255,255,255,0.15)':'rgba(255,255,255,0.55)';
+      ctx.beginPath(); ctx.ellipse(x-5,y-5,CELL*0.14,CELL*0.09,-0.5,0,Math.PI*2); ctx.fill();
+    }
+  }
+
+  // ひっくり返ったマスを光らせる
+  lastFlipped.forEach(f=>{
+    if(f.timer<=0) return;
+    const a=f.timer/30;
+    const x=BX+f.c*CELL, y=BY+f.r*CELL;
+    ctx.fillStyle=`rgba(255,220,50,${a*0.55})`;
+    ctx.fillRect(x,y,CELL,CELL);
+    ctx.strokeStyle=`rgba(255,200,0,${a*0.9})`;
+    ctx.lineWidth=2;
+    ctx.strokeRect(x+1,y+1,CELL-2,CELL-2);
+  });
+
+  // 棒人間
+  for(const f of interferers){
+    if(f.type==='runner'){
+      // ランナーの下にある駒の色と反対色
+      const rc=Math.floor((f.x-BX)/CELL);
+      const under=rc>=0&&rc<8?board[f.row][rc]:EMPTY;
+      const col=under===WHITE?'#111':under===BLACK?'#eee':'#aaa';
+      drawStick(f.x, f.y, 0.9, f.t, col);
+    } else {
+      // シッターも駒の色と反対色
+      const under=board[f.row][f.col];
+      const col=under===WHITE?'#111':under===BLACK?'#eee':'#aaa';
+      drawSitterStick(f.x, f.y-10, 0.85, f.t, col);
+      // 座っているマスに×印
+      const sx=BX+f.col*CELL, sy=BY+f.row*CELL;
+      ctx.strokeStyle='rgba(220,80,80,0.6)'; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.moveTo(sx+4,sy+4); ctx.lineTo(sx+CELL-4,sy+CELL-4); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(sx+CELL-4,sy+4); ctx.lineTo(sx+4,sy+CELL-4); ctx.stroke();
+    }
+  }
+}
+
+function drawHUD(){
+  // 上部バー
+  ctx.fillStyle='rgba(10,18,8,0.95)'; ctx.fillRect(0,0,W,BY-2);
+
+  const pCount  = countPieces(playerColor);
+  const cCount  = countPieces(opp(playerColor));
+  const pLabel  = playerColor===BLACK ? '黒●' : '白○';
+  const cLabel  = playerColor===BLACK ? '白○' : '黒●';
+  const cName   = mode==='cpu' ? 'CPU' : '相手';
+  const pActive = cur===playerColor && state==='playing';
+  const cActive = cur!==playerColor && state==='playing';
+
+  // メニューボタン（左上）
+  ctx.fillStyle='#1a1208'; ctx.fillRect(6,6,58,22);
+  ctx.strokeStyle='#3a3020'; ctx.lineWidth=1; ctx.strokeRect(6,6,58,22);
+  ctx.fillStyle='#555'; ctx.font='10px Courier New';
+  ctx.textAlign='left'; ctx.fillText('← メニュー',10,21);
+
+  // スコア：「あなた(黒●) 14  VS  12 CPU(白○)」を中央に
+  const cx = W/2;
+
+  // ── スコア（y=42に上げる）──
+  const ny = 42;
+  ctx.fillStyle='#888'; ctx.font='bold 11px Courier New';
+  ctx.textAlign='right'; ctx.fillText(`あなた(${pLabel})`, cx-54, ny);
+  ctx.fillStyle='#fff'; ctx.font='bold 32px Courier New';
+  ctx.fillText(pCount, cx-14, ny);
+
+  ctx.fillStyle='#5a7050'; ctx.font='bold 12px Courier New';
+  ctx.textAlign='center'; ctx.fillText('VS', cx, ny-4);
+
+  ctx.fillStyle='#fff'; ctx.font='bold 32px Courier New';
+  ctx.textAlign='left'; ctx.fillText(cCount, cx+14, ny);
+  ctx.fillStyle='#888'; ctx.font='bold 11px Courier New';
+  ctx.fillText(`${cName}(${cLabel})`, cx+54, ny);
+
+  // ── 番の表示（y=62）──
+  ctx.textAlign='center';
+  if(pActive){
+    ctx.fillStyle='#e8c060'; ctx.font='bold 13px Courier New';
+    ctx.fillText('▶ あなたの番です', cx, 62);
+  } else if(cActive){
+    ctx.fillStyle='#666'; ctx.font='bold 12px Courier New';
+    ctx.fillText(mode==='cpu'?'CPU 思考中…':'相手の番です', cx, 62);
+  }
+
+  // ── 妨害状況（y=82）──
+  const runners=interferers.filter(f=>f.type==='runner');
+  const sitters=interferers.filter(f=>f.type==='sitter');
+  if(runners.length||sitters.length){
+    const parts=[];
+    if(runners.length) parts.push('棒人間が乱入中！');
+    if(sitters.length) parts.push('棒人間がマス占領中');
+    ctx.fillStyle='#e05530'; ctx.font='bold 11px Courier New';
+    ctx.fillText(parts.join('  '), cx, 82);
+  }
+
+  // メッセージ
+  if(msg&&msg.timer>0){
+    ctx.fillStyle='rgba(0,0,0,0.7)'; ctx.fillRect(W/2-160,96,320,22);
+    ctx.fillStyle='#c8a060'; ctx.font='bold 12px Courier New';
+    ctx.textAlign='center'; ctx.fillText(msg.text,W/2,111);
+    msg.timer--;
+  }
+
+  // 点滅フラッシュ（駒を置いた瞬間）
+  if(flash>0){
+    ctx.fillStyle=`rgba(255,255,255,${flash/12*0.12})`;
+    ctx.fillRect(0,0,W,H); flash--;
+  }
+
+  ctx.textAlign='left';
+}
+
+function drawTitle(){
+  ctx.fillStyle='#1a1f14'; ctx.fillRect(0,0,W,H);
+
+  ctx.fillStyle='#c8a060'; ctx.font='bold 30px Courier New'; ctx.textAlign='center';
+  ctx.fillText('棒人間オセロ',W/2,100);
+  ctx.fillStyle='#555'; ctx.font='12px Courier New';
+  ctx.fillText('BŌNINGEN OTHELLO',W/2,124);
+
+  ctx.fillStyle='#3a3020'; ctx.font='11px Courier New';
+  ctx.fillText('棒人間が乱入してきて駒を蹴ったり',W/2,160);
+  ctx.fillText('マスに座ったりして妨害してくる！',W/2,178);
+
+  // モード選択ボタン
+  [['2p','👥  2人対戦',220],['cpu','🤖  CPUと対戦',320]].forEach(([key,label,y])=>{
+    ctx.fillStyle='#141210'; ctx.fillRect(60,y,W-120,74);
+    ctx.strokeStyle='#3a3020'; ctx.lineWidth=1; ctx.strokeRect(60,y,W-120,74);
+    // コーナー装飾
+    const cs=8;
+    ctx.strokeStyle='#c8a060'; ctx.lineWidth=1.5;
+    [[60,y],[W-60,y],[60,y+74],[W-60,y+74]].forEach(([bx,by],i)=>{
+      const sx=i%2===0?1:-1, sy=i<2?1:-1;
+      ctx.beginPath();
+      ctx.moveTo(bx+sx*cs,by); ctx.lineTo(bx,by); ctx.lineTo(bx,by+sy*cs);
+      ctx.stroke();
+    });
+    ctx.fillStyle='#d8ccb0'; ctx.font='bold 20px Courier New';
+    ctx.fillText(label,W/2,y+34);
+    ctx.fillStyle='#555'; ctx.font='11px Courier New';
+    ctx.fillText(key==='2p'?'同じ端末で交互に対戦':'棒人間CPUと対戦',W/2,y+56);
+  });
+
+  ctx.textAlign='left';
+}
+
+function drawGameover(){
+  const bCount=countPieces(BLACK), wCount=countPieces(WHITE);
+  let winner='';
+  if(bCount>wCount) winner=mode==='cpu'?'あなたの勝ち！':'黒の勝ち！';
+  else if(wCount>bCount) winner=mode==='cpu'?'CPUの勝ち！':'白の勝ち！';
+  else winner='引き分け！';
+
+  ctx.fillStyle='rgba(0,0,0,0.82)'; ctx.fillRect(0,0,W,H);
+  ctx.textAlign='center';
+  ctx.fillStyle='#c8a060'; ctx.font='bold 32px Courier New';
+  ctx.fillText('ゲーム終了',W/2,H*0.3);
+  ctx.fillStyle='#fff'; ctx.font='bold 24px Courier New';
+  ctx.fillText(winner,W/2,H*0.42);
+  ctx.fillStyle='#888'; ctx.font='16px Courier New';
+  ctx.fillText(`● ${bCount}  VS  ${wCount} ○`,W/2,H*0.52);
+
+  // もう一度・メニューボタン
+  [['retry','もう一度',H*0.64],['menu','メニューへ',H*0.76]].forEach(([key,label,y])=>{
+    ctx.fillStyle='#1a1208'; ctx.fillRect(W/2-80,y-22,160,36);
+    ctx.strokeStyle='#c8a060'; ctx.lineWidth=1; ctx.strokeRect(W/2-80,y-22,160,36);
+    ctx.fillStyle='#d8ccb0'; ctx.font='bold 15px Courier New';
+    ctx.fillText(label,W/2,y);
+  });
+  ctx.textAlign='left';
+}
+
+// ── 入力 ──
+function getPos(e){
+  const rect=canvas.getBoundingClientRect();
+  const tx=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
+  const ty=(e.touches?e.touches[0].clientY:e.clientY)-rect.top;
+  return {x:tx/sc,y:ty/sc};
+}
+
+function onTap(e){
+  e.preventDefault();
+  const{x,y}=getPos(e);
+
+  if(state==='title'){
+    if(x>=60&&x<=W-60&&y>=220&&y<=294){ initGame('2p'); return; }
+    if(x>=60&&x<=W-60&&y>=320&&y<=394){ initGame('cpu'); return; }
+    return;
+  }
+
+  if(state==='gameover'){
+    const cy1=H*0.64, cy2=H*0.76;
+    if(Math.abs(y-cy1)<22&&Math.abs(x-W/2)<80){ initGame(mode); return; }
+    if(Math.abs(y-cy2)<22&&Math.abs(x-W/2)<80){ state='title'; return; }
+    return;
+  }
+
+  if(state==='playing'){
+    // メニューボタン
+    if(x>=6&&x<=64&&y>=6&&y<=28){ state='title'; return; }
+
+    // CPUのターンはタップ不可
+    if(mode==='cpu'&&cur!==playerColor) return;
+
+    // 盤面タップ
+    const c=Math.floor((x-BX)/CELL);
+    const r=Math.floor((y-BY)/CELL);
+    if(r<0||r>=8||c<0||c>=8) return;
+    if(placeAt(r,c,cur)){ nextTurn(); }
+  }
+}
+
+canvas.addEventListener('touchstart',onTap,{passive:false});
+canvas.addEventListener('click',onTap);
+
+// ── メインループ ──
+function loop(){
+  tick++;
+  // フラッシュタイマー更新
+  lastFlipped.forEach(f=>f.timer--);
+  lastFlipped=lastFlipped.filter(f=>f.timer>0);
+
+  // ランナー棒人間の移動
+  if(state==='playing'){
+    interferers=interferers.filter(f=>{
+      f.t++;
+      if(f.type==='runner'){
+        f.x+=f.vx;
+        // ターゲットのマスを通過したら1枚だけひっくり返す
+        if(!f.flipped && f.flipCol>=0){
+          const tx=BX+f.flipCol*CELL+CELL/2;
+          if((f.vx>0&&f.x>=tx)||(f.vx<0&&f.x<=tx)){
+            if(board[f.row][f.flipCol]!==EMPTY){
+              board[f.row][f.flipCol]=opp(board[f.row][f.flipCol]);
+              lastFlipped=[{r:f.row,c:f.flipCol,timer:40}];
+              flash=10;
+              showMsg('駒を蹴ってひっくり返した！',60);
+            }
+            f.flipped=true;
+          }
+        }
+        if(f.x<BX-60||f.x>BX+CELL*8+60) return false;
+      }
+      return true;
+    });
+
+    // CPUのターン
+    if(mode==='cpu'&&cur!==playerColor&&cpuTimer>0){
+      cpuTimer--;
+      if(cpuTimer===0) cpuMove();
+    }
+  }
+
+  // 描画
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#1a1f14'; ctx.fillRect(0,0,W,H);
+
+  if(state==='title'){ drawTitle(); }
+  else if(state==='playing'||state==='gameover'){
+    drawBoard();
+    drawHUD();
+    if(state==='gameover') drawGameover();
+  }
+
+  requestAnimationFrame(loop);
+}
+
+loop();
+</script>
+</body>
+</html>
