@@ -742,12 +742,11 @@ function goTitle() {
 
 function startGame() {
   balls = []; particles = []; drag = []; popFlash = null;
-  score = 0; tick = 0; spawnTimer = 0; spawnInterval = 50;
+  score = 0; tick = 0; spawnTimer = 0; spawnInterval = 120;
   scoreEl.textContent = 0;
   state = 'playing';
   spawnBall(); // 1個目即座に
-  spawnBall(); // 2個目もすぐ
-  spawnTimer = 40; // 3個目は少し待つ
+  spawnTimer = 80; // 2個目は少し待つ
   ballcountEl.textContent = balls.length;
 }
 
