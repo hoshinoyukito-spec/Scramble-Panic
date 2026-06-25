@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>THE EARTH — HubScription Games</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body {
+      background:#000;
+      display:flex; flex-direction:column;
+      align-items:center; justify-content:center;
+      min-height:100vh;
+      overflow:hidden; touch-action:none; user-select:none;
+      font-family:'Courier New',monospace;
+    }
+    canvas { display:block; }
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById('c');
+const ctx    = canvas.getContext('2d');
+const DPR    = Math.min(window.devicePixelRatio||1, 2);
+const W = Math.min(window.innerWidth, 420);
+const H = Math.min(window.innerHeight, 700);
+canvas.width  = W*DPR; canvas.height = H*DPR;
+canvas.style.width = W+'px'; canvas.style.height = H+'px';
+ctx.scale(DPR, DPR);
+
+const CX = W/2, CY = H*0.44;
+const R  = Math.min(W,H)*0.30;
+
+// ── 物理 ──
+let angle    = 0;    // 正=右回転
+let velocity = 0;
+let totalRot = 0;    // 符号あり累計（正=右回転=未来）
+let tick     = 0;
+const FRICTION = 0.991, MAX_VEL = 0.32;
+
+// ── 入力 ──
+let dragging=false, lastX=0, lastY=0, lastTime=0;
+function applyImpulse(px,py,dx,dy){
+  // X軸方向のスワイプのみで回転
+  velocity=Math.max(-MAX_VEL,Math.min(MAX_VEL,velocity-dx*0.004));
+}
+canvas.addEventListener('touchstart',e=>{e.preventDefault();const t=e.touches[0];lastX=t.clientX;lastY=t.clientY;lastTime=performance.now();dragging=true;},{passive:false});
+canvas.addEventListener('touchmove',e=>{e.preventDefault();if(!dragging)return;const t=e.touches[0],now=performance.now(),dt=Math.max(1,now-lastTime);applyImpulse(lastX,lastY,(t.clientX-lastX)*16/dt,(t.clientY-lastY)*16/dt);lastX=t.clientX;lastY=t.clientY;lastTime=now;},{passive:false});
+canvas.addEventListener('touchend',e=>{e.preventDefault();dragging=false;},{passive:false});
+canvas.addEventListener('mousedown',e=>{lastX=e.clientX;lastY=e.clientY;lastTime=performance.now();dragging=true;});
+canvas.addEventListener('mousemove',e=>{if(!dragging)return;const now=performance.now(),dt=Math.max(1,now-lastTime);applyImpulse(lastX,lastY,(e.clientX-lastX)*16/dt,(e.clientY-lastY)*16/dt);lastX=e.clientX;lastY=e.clientY;lastTime=now;});
+canvas.addEventListener('mouseup',()=>dragging=false);
+canvas.addEventListener('click',e=>{
+  // ドラッグなしクリックでも回す（クリック位置の接線方向に）
+  if(Math.abs(velocity)<0.01){
+    velocity += e.clientX > CX ? 0.06 : -0.06;
+  }
+});
+// キーボード（PC用・長押し無効）
+document.addEventListener('keydown',e=>{
+  if(e.repeat) return; // 長押しリピート無効
+  if(e.key==='ArrowRight') velocity=Math.min(MAX_VEL, velocity+0.08); // 未来
+  if(e.key==='ArrowLeft')  velocity=Math.max(-MAX_VEL,velocity-0.08); // 過去
+  if(e.key===' '||e.key==='Enter') e.preventDefault();
+});
+
+// ── 球面投影 ──
+function project(lonDeg, latDeg) {
+  const lon = lonDeg*Math.PI/180 + angle;
+  const lat = latDeg*Math.PI/180;
+  const cosLon=Math.cos(lon), sinLon=Math.sin(lon);
+  const cosLat=Math.cos(lat), sinLat=Math.sin(lat);
+  return {
+    x: CX + sinLon*cosLat*R,
+    y: CY - sinLat*R,
+    depth: cosLon*cosLat,  // >0なら手前
+    vis: cosLon*cosLat > -0.08
+  };
+}
+
+// ── 大陸ポリゴン（簡略化した現実の形） ──
+const LAND = [
+  // 北アメリカ
+  {col:'#4a7c38',hi:'#5a9445',pts:[[-168,72],[-140,70],[-95,75],[-60,68],[-52,48],[-55,30],[-80,25],[-85,15],[-92,16],[-105,20],[-120,30],[-125,48],[-140,58],[-155,58],[-160,65],[-168,68]]},
+  // グリーンランド
+  {col:'#6a9050',hi:'#c8ddc8',pts:[[-55,76],[-18,76],[-18,70],[-25,65],[-45,60],[-55,68]]},
+  // 南アメリカ
+  {col:'#3a7c2a',hi:'#4a9035',pts:[[-80,12],[-62,10],[-50,2],[-35,-8],[-35,-30],[-55,-55],[-68,-55],[-75,-45],[-80,-20],[-80,5]]},
+  // ヨーロッパ
+  {col:'#60884a',hi:'#70a055',pts:[[-10,36],[5,36],[15,38],[28,40],[35,48],[30,60],[20,65],[10,58],[0,50],[-5,44]]},
+  // スカンジナビア
+  {col:'#60884a',hi:'#70a055',pts:[[5,58],[10,56],[20,56],[28,70],[18,72],[8,68],[5,64]]},
+  // アフリカ
+  {col:'#7a8830',hi:'#8a9c38',pts:[[-18,38],[10,38],[38,22],[52,12],[44,-12],[35,-28],[18,-35],[12,-20],[-2,4],[-16,16],[-18,28]]},
+  // マダガスカル
+  {col:'#7a8830',hi:'#8a9c38',pts:[[44,-12],[50,-16],[50,-25],[44,-26],[42,-18]]},
+  // 中東・アラビア半島
+  {col:'#a09050',hi:'#b0a060',pts:[[36,28],[58,22],[58,12],[45,12],[38,14],[36,20]]},
+  // アジア（本体）
+  {col:'#5a7c3a',hi:'#6a9045',pts:[[28,40],[42,42],[58,50],[80,72],[105,75],[130,72],[140,50],[145,42],[138,34],[120,24],[110,8],[100,2],[95,6],[80,10],[68,22],[58,22],[52,12],[44,12],[38,14],[35,48]]},
+  // 日本
+  {col:'#5a8040',hi:'#6a9050',pts:[[130,32],[132,34],[134,34],[136,36],[141,40],[142,44],[140,44],[135,35],[131,33]]},
+  // 台湾
+  {col:'#5a8040',pts:[[120,22],[122,24],[121,25],[120,24]]},
+  // インドネシア（スマトラ・ジャワ）
+  {col:'#4a7c30',pts:[[95,6],[106,6],[110,8],[108,2],[96,4]]},
+  // インド
+  {col:'#6a8035',hi:'#7a9040',pts:[[68,22],[72,22],[80,8],[80,10],[70,22]]},
+  // 北極
+  {col:'#d8eef8',pts:[[-180,80],[180,80],[180,90],[-180,90]]},
+  // 南極
+  {col:'#e8f4fc',pts:[[-180,-68],[180,-68],[180,-90],[-180,-90]]},
+  // オーストラリア
+  {col:'#9a8840',hi:'#b09848',pts:[[114,-22],[125,-14],[138,-12],[145,-18],[152,-25],[148,-38],[136,-36],[128,-33],[114,-32],[114,-22]]},
+  // ニュージーランド（北島）
+  {col:'#6a9040',pts:[[172,-36],[178,-38],[178,-42],[172,-40],[170,-37]]},
+];
+
+// ポリゴン描画
+function drawPolygon(pts, col, alpha) {
+  if (!pts||pts.length<3) return;
+  // 中心点の可視チェック
+  const cx0=pts.reduce((s,p)=>s+p[0],0)/pts.length;
+  const cy0=pts.reduce((s,p)=>s+p[1],0)/pts.length;
+  const cen=project(cx0,cy0);
+  if(cen.depth<-0.3) return;
+
+  const projected=pts.map(([lo,la])=>project(lo,la));
+  if(projected.every(p=>!p.vis)) return;
+
+  ctx.globalAlpha=Math.min(1,alpha*(0.5+Math.max(0,cen.depth)*0.5));
+  ctx.fillStyle=col;
+  ctx.beginPath();
+  projected.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));
+  ctx.closePath();
+  ctx.fill();
+  ctx.globalAlpha=1;
+}
+
+// ── 星 ──
+const STARS=Array.from({length:200},()=>({x:Math.random()*W,y:Math.random()*H,r:Math.random()*1.2+0.2,b:Math.random()*0.7+0.2}));
+function drawStars(){
+  for(const s of STARS){
+    const tw=s.b+Math.sin(tick*0.03+s.x*0.1)*0.15;
+    ctx.fillStyle=`rgba(255,255,255,${tw})`;
+    ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,Math.PI*2); ctx.fill();
+  }
+}
+
+// ── 地球描画 ──
+const TILT = 23.44 * Math.PI / 180; // 地軸の傾き
+
+function drawEarth() {
+  const speed=Math.abs(velocity);
+  // 地軸の傾きを適用
+  ctx.save();
+  ctx.translate(CX, CY);
+  ctx.rotate(TILT);
+  ctx.translate(-CX, -CY);
+
+  // 外側グロー
+  const og=ctx.createRadialGradient(CX,CY,R*0.9,CX,CY,R*1.5);
+  og.addColorStop(0,'rgba(40,100,200,0.15)');
+  og.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=og; ctx.beginPath(); ctx.arc(CX,CY,R*1.5,0,Math.PI*2); ctx.fill();
+
+  // クリップ（球の中だけ描く）
+  ctx.save();
+  ctx.beginPath(); ctx.arc(CX,CY,R,0,Math.PI*2); ctx.clip();
+
+  // 海（グラデーション）
+  const ocean=ctx.createRadialGradient(CX-R*0.3,CY-R*0.3,R*0.05,CX,CY,R);
+  ocean.addColorStop(0,'#3a7ac0');
+  ocean.addColorStop(0.4,'#1a52a0');
+  ocean.addColorStop(0.8,'#0e2e70');
+  ocean.addColorStop(1,'#080a30');
+  ctx.fillStyle=ocean; ctx.fillRect(CX-R,CY-R,R*2,R*2);
+
+  // 大陸描画（奥→手前の順）
+  const sorted=[...LAND].sort((a,b)=>{
+    const la=project(a.pts.reduce((s,p)=>s+p[0],0)/a.pts.length, a.pts.reduce((s,p)=>s+p[1],0)/a.pts.length);
+    const lb=project(b.pts.reduce((s,p)=>s+p[0],0)/b.pts.length, b.pts.reduce((s,p)=>s+p[1],0)/b.pts.length);
+    return la.depth-lb.depth;
+  });
+  for(const land of sorted){
+    drawPolygon(land.pts, land.col, 1.0);
+    // ハイライト（より手前の場合）
+    if(land.hi){
+      const cen=project(land.pts.reduce((s,p)=>s+p[0],0)/land.pts.length,land.pts.reduce((s,p)=>s+p[1],0)/land.pts.length);
+      if(cen.depth>0.3){
+        drawPolygon(land.pts.map(([lo,la])=>[lo,la+0.5]),land.hi,0.4);
+      }
+    }
+  }
+
+  // 浅い海（大陸棚）- 大陸ポリゴンの周囲に薄い色
+  ctx.globalAlpha=0.12;
+  ctx.fillStyle='#6aaae0';
+  for(const land of sorted){
+    if(!land.pts||land.col==='#d8eef8'||land.col==='#e8f4fc') continue;
+    const cen=project(land.pts.reduce((s,p)=>s+p[0],0)/land.pts.length,land.pts.reduce((s,p)=>s+p[1],0)/land.pts.length);
+    if(cen.depth<0) continue;
+    const expanded=land.pts.map(([lo,la])=>[lo*1.01,la*1.02]);
+    const proj=expanded.map(([lo,la])=>project(lo,la));
+    ctx.beginPath();
+    proj.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.globalAlpha=1;
+
+  // 雲
+  const clouds=[
+    {lon:-30,lat:55,w:0.30,h:0.06},{lon:80,lat:-15,w:0.25,h:0.05},
+    {lon:-100,lat:45,w:0.22,h:0.05},{lon:160,lat:-40,w:0.18,h:0.04},
+    {lon:-70,lat:-30,w:0.20,h:0.05},{lon:20,lat:60,w:0.18,h:0.04},
+    {lon:140,lat:35,w:0.16,h:0.04},{lon:-50,lat:10,w:0.14,h:0.04},
+  ];
+  for(const cl of clouds){
+    const lon=cl.lon*Math.PI/180+angle*1.03;
+    const lat=cl.lat*Math.PI/180;
+    const cd=Math.cos(lon)*Math.cos(lat);
+    if(cd<0) continue;
+    ctx.globalAlpha=Math.min(0.65,cd*0.75);
+    ctx.fillStyle='rgba(255,255,255,0.9)';
+    ctx.beginPath();
+    ctx.ellipse(CX+Math.sin(lon)*Math.cos(lat)*R,CY-Math.sin(lat)*R,cl.w*R*Math.max(0.05,Math.abs(Math.cos(lon))),cl.h*R,0,0,Math.PI*2);
+    ctx.fill();
+  }
+  ctx.globalAlpha=1;
+
+
+  // 光沢
+  const hl=ctx.createRadialGradient(CX-R*0.38,CY-R*0.32,0,CX-R*0.15,CY-R*0.12,R*0.85);
+  hl.addColorStop(0,'rgba(255,255,255,0.22)');
+  hl.addColorStop(0.4,'rgba(255,255,255,0.05)');
+  hl.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=hl; ctx.fillRect(CX-R,CY-R,R*2,R*2);
+
+  ctx.restore();
+
+  // 大気フチ
+  const atm=ctx.createRadialGradient(CX,CY,R*0.88,CX,CY,R*1.04);
+  atm.addColorStop(0,'rgba(60,140,255,0)');
+  atm.addColorStop(0.6,'rgba(60,140,255,0.12)');
+  atm.addColorStop(1,'rgba(100,180,255,0.35)');
+  ctx.fillStyle=atm; ctx.beginPath(); ctx.arc(CX,CY,R*1.04,0,Math.PI*2); ctx.fill();
+
+  // モーションブラー
+  if(speed>0.025){
+    const bl=Math.min(4,Math.floor(speed*14));
+    for(let b=bl;b>=1;b--){
+      ctx.globalAlpha=0.05/b;
+      ctx.fillStyle='#1040a0';
+      ctx.beginPath(); ctx.arc(CX,CY,R,0,Math.PI*2); ctx.fill();
+    }
+    ctx.globalAlpha=1;
+  }
+  // 傾き用のsaveを閉じる
+  ctx.restore();
+}
+
+// ── 日付計算（0年1月1日スタート）──
+function calcDate(daysOffset) {
+  const d = Math.round(daysOffset);
+  const isBC = d < 0;
+  let rem = Math.abs(d);
+  let year = 0;
+  // 年を計算
+  while(true){
+    const yd = ((isBC ? -year : year) % 4 === 0) ? 366 : 365;
+    if(rem < yd) break;
+    rem -= yd; year++;
+  }
+  const leap = (isBC ? -year : year) % 4 === 0;
+  const months = [31,leap?29:28,31,30,31,30,31,31,30,31,30,31];
+  let month = 1;
+  for(const m of months){ if(rem < m) break; rem -= m; month++; }
+  const day = rem + 1;
+  return { year: isBC ? -year : year + 1, month, day, isBC };
+}
+
+function formatDate(daysOffset) {
+  const {year, month, day, isBC} = calcDate(daysOffset);
+  const y = Math.abs(year);
+  const m = String(month).padStart(2,'0');
+  const d = String(day).padStart(2,'0');
+  return isBC ? `紀元前${y}年${m}月${d}日` : `${y}年${m}月${d}日`;
+}
+
+// ── UI ──
+function drawUI() {
+  const days = totalRot / (Math.PI*2);
+  const absDays = Math.abs(days);
+  const absPast = days < 0;
+
+  // 日付のみ表示
+  const dateStr = formatDate(Math.round(days));
+  ctx.fillStyle='rgba(255,255,255,0.92)';
+  ctx.font=`bold ${Math.floor(W*0.058)}px 'Courier New'`;
+  ctx.fillText(dateStr, W/2, H*0.885);
+
+  // 速度バー
+  const spd=Math.abs(velocity)/MAX_VEL;
+  if(spd>0.01){
+    const bw=W*0.55,bh=3,bx=W/2-bw/2,by=H*0.93;
+    ctx.fillStyle='rgba(255,255,255,0.08)'; ctx.fillRect(bx,by,bw,bh);
+    const g=ctx.createLinearGradient(bx,0,bx+bw,0);
+    g.addColorStop(0,'#4080ff'); g.addColorStop(1,'#40d0ff');
+    ctx.fillStyle=g; ctx.fillRect(bx,by,bw*spd,bh);
+  }
+  ctx.textAlign='left';
+}
+
+// ── 更新 ──
+function update(){
+  tick++;
+  angle    += velocity;
+  totalRot += velocity;  // 符号あり
+  velocity *= FRICTION;
+  if(Math.abs(velocity)<0.00008) velocity=0;
+}
+
+// ── メインループ ──
+function loop(){
+  update();
+  ctx.fillStyle='#000510'; ctx.fillRect(0,0,W,H);
+  drawStars();
+  drawEarth();
+  drawUI();
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+
+<button id="hub-btn" style="position:fixed;top:10px;left:10px;font-family:'Courier New',monospace;font-size:13px;font-weight:bold;color:#ccc;background:rgba(0,0,0,0.7);border:1px solid #555;padding:6px 14px;border-radius:6px;cursor:pointer;letter-spacing:1px;z-index:9999;touch-action:auto;">HUB</button>
+<script>
+document.getElementById('hub-btn').addEventListener('touchstart',function(e){e.stopPropagation();e.preventDefault();location.href='../';},{passive:false});
+document.getElementById('hub-btn').addEventListener('click',function(){location.href='../';});
+</script>
+</body>
+</html>
