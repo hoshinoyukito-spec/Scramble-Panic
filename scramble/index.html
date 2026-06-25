@@ -231,8 +231,7 @@
     }
   </style>
 </head>
-<a href="../" style="position:fixed;bottom:8px;left:50%;transform:translateX(-50%);font-family:'Courier New',monospace;font-size:10px;color:#333;letter-spacing:2px;text-decoration:none;">← HubScription Games</a>
-  <body>
+<body>
   <div style="font-family:'Courier New',monospace;color:#fff;font-size:clamp(15px,4vw,26px);letter-spacing:5px;text-shadow:0 0 8px #fff,0 0 22px #fff;margin-bottom:4px;font-weight:bold;">SCRAMBLE PANIC</div>
   <div id="hud">
     <div id="hud-records">
@@ -957,7 +956,7 @@ function updateJoystick(touch) {
   joystickThumb.style.left = (50 + dx/JR*100) + '%';
   joystickThumb.style.top  = (50 + dy/JR*100) + '%';
   joystickThumb.style.transform = 'translate(-50%,-50%)';
-  const th = 0.12, nd = dist > 8 ? dist : 0;
+  const th = 0.28, nd = dist > 8 ? dist : 0;
   keys['ArrowLeft']  = nd > 0 && dx/max < -th;
   keys['ArrowRight'] = nd > 0 && dx/max >  th;
   keys['ArrowUp']    = nd > 0 && dy/max < -th;
