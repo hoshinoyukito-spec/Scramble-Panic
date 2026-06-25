@@ -643,7 +643,7 @@ function update() {
     ballcountEl.textContent = balls.length;
     if (balls.length >= MAX_BALLS) { state = 'gameover'; return; }
     // Speed up over time
-    spawnInterval = Math.max(45, spawnInterval - 4);
+    spawnInterval = Math.max(60, spawnInterval - 3);
   }
 
   // Separate balls not being dragged
@@ -742,7 +742,7 @@ function goTitle() {
 
 function startGame() {
   balls = []; particles = []; drag = []; popFlash = null;
-  score = 0; tick = 0; spawnTimer = 0; spawnInterval = 120;
+  score = 0; tick = 0; spawnTimer = 0; spawnInterval = 200;
   scoreEl.textContent = 0;
   state = 'playing';
   spawnBall(); // 1個目即座に
@@ -758,5 +758,7 @@ function loop() {
 }
 loop();
 </script>
+  
+  <a href="../" style="position:fixed;top:10px;right:10px;font-family:Courier New,monospace;font-size:13px;font-weight:bold;color:#ccc;background:rgba(0,0,0,0.7);border:1px solid #666;padding:6px 14px;border-radius:6px;text-decoration:none;letter-spacing:1px;z-index:9999;">HUB</a>
 </body>
 </html>
