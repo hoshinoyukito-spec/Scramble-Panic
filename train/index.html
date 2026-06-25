@@ -28,7 +28,7 @@ const ctx    = canvas.getContext('2d');
 const isLandscape = window.innerWidth > window.innerHeight;
 let W, H;
 if(isLandscape){
-  H = Math.floor(window.innerHeight * 0.96);
+  H = Math.floor(window.innerHeight * 0.78);
   W = Math.min(Math.floor(H * 16/9), window.innerWidth);
   H = Math.floor(W * 9/16);
 } else {
@@ -642,12 +642,14 @@ document.addEventListener('keydown',e=>{
 });
 
 // タッチ（左半分タップ→左、右半分タップ→右）
-canvas.addEventListener('touchstart',e=>{
+// canvas外（黒い部分）もタップを拾うためdocumentに登録
+document.addEventListener('touchstart',e=>{
   e.preventDefault();
   const t=e.touches[0];
   const rect=canvas.getBoundingClientRect();
-  const cx=(t.clientX-rect.left)*(W/rect.width);
-  const cy=(t.clientY-rect.top)*(H/rect.height);
+  // canvas外のタップはcanvas座標にクランプ
+  const cx=Math.max(0,Math.min(W,(t.clientX-rect.left)*(W/rect.width)));
+  const cy=Math.max(0,Math.min(H,(t.clientY-rect.top)*(H/rect.height)));
   if(state==='title'||state==='end'){
     if(showHow){ showHow=false; return; }
     // HOW TO PLAYボタン
@@ -659,13 +661,13 @@ canvas.addEventListener('touchstart',e=>{
   doSwipe(cx < playerX ? -1 : 1);
 },{passive:false});
 
-canvas.addEventListener('touchend',e=>{ e.preventDefault(); },{passive:false});
+document.addEventListener('touchend',e=>{ e.preventDefault(); },{passive:false});
 
-// クリック（左半分→左、右半分→右）
-canvas.addEventListener('click',e=>{
+// クリック（canvas外も含む）
+document.addEventListener('click',e=>{
   const rect=canvas.getBoundingClientRect();
-  const cx=(e.clientX-rect.left)*(W/rect.width);
-  const cy=(e.clientY-rect.top)*(H/rect.height);
+  const cx=Math.max(0,Math.min(W,(e.clientX-rect.left)*(W/rect.width)));
+  const cy=Math.max(0,Math.min(H,(e.clientY-rect.top)*(H/rect.height)));
   if(state==='title'||state==='end'){
     if(showHow){ showHow=false; return; }
     if(cx>=W*0.28&&cx<=W*0.72&&cy>=H*0.83&&cy<=H*0.92){ showHow=true; return; }
