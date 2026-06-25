@@ -24,8 +24,17 @@
 const canvas = document.getElementById('c');
 const ctx    = canvas.getContext('2d');
 
-const W = Math.min(window.innerWidth,  680);
-const H = Math.floor(W * 9/16);
+// 横向き時は高さ基準で大きく表示
+const isLandscape = window.innerWidth > window.innerHeight;
+let W, H;
+if(isLandscape){
+  H = Math.floor(window.innerHeight * 0.96);
+  W = Math.min(Math.floor(H * 16/9), window.innerWidth);
+  H = Math.floor(W * 9/16);
+} else {
+  W = Math.min(window.innerWidth, 680);
+  H = Math.floor(W * 9/16);
+}
 canvas.width  = W; canvas.height = H;
 canvas.style.width = W+'px'; canvas.style.height = H+'px';
 
