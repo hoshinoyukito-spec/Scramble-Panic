@@ -60,6 +60,8 @@ function initGame(m){
   moveCount=0; interferers=[]; interTurn=0; nextInterfer=rand(4,7);
   cpuTimer=0; msg=null; flash=0;
   state='playing';
+  // CPUが先攻になった場合はタイマーをセット
+  if(mode==='cpu' && cur !== playerColor) cpuTimer=rand(90,150);
 }
 
 function opp(p){ return p===BLACK?WHITE:BLACK; }
@@ -131,19 +133,20 @@ function nextTurn(){
 
 // ── CPU AI（コーナー優先＋最多裏返し） ──
 function cpuMove(){
-  const moves=getValidMoves(WHITE);
+  const cpuColor=opp(playerColor);
+  const moves=getValidMoves(cpuColor);
   if(!moves.length){ nextTurn(); return; }
   const corners=moves.filter(([r,c])=>(r===0||r===7)&&(c===0||c===7));
-  if(corners.length){ const[r,c]=corners[0]; placeAt(r,c,WHITE); nextTurn(); return; }
+  if(corners.length){ const[r,c]=corners[0]; placeAt(r,c,cpuColor); nextTurn(); return; }
   const edges=moves.filter(([r,c])=>r===0||r===7||c===0||c===7);
   const pool=edges.length?edges:moves;
   let best=null,bestN=0;
   for(const[r,c]of pool){
-    const n=validFlips(r,c,WHITE).length;
+    const n=validFlips(r,c,cpuColor).length;
     if(n>bestN){ bestN=n; best=[r,c]; }
   }
   if(!best) best=moves[rand(0,moves.length-1)];
-  placeAt(best[0],best[1],WHITE);
+  placeAt(best[0],best[1],cpuColor);
   nextTurn();
 }
 
