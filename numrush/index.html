@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>NUM RUSH</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+body {
+  background: #1a1a2e;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  font-family: 'Arial Black', sans-serif;
+  color: #eee;
+  user-select: none;
+  touch-action: manipulation;
+  padding: 16px;
+  position: relative;
+}
+
+h1 {
+  font-size: 3em;
+  letter-spacing: 0.1em;
+  color: #e94560;
+  margin-bottom: 10px;
+}
+
+#muteBtn {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  background: #16213e;
+  border: 2px solid #0f3460;
+  color: #eee;
+  width: 42px;
+  height: 42px;
+  font-size: 1.1em;
+  border-radius: 50%;
+  cursor: pointer;
+  z-index: 20;
+}
+#muteBtn:hover { border-color: #e94560; }
+
+#config-area {
+  display: flex;
+  gap: 20px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.config-group {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.config-label {
+  font-size: 0.65em;
+  color: #888;
+  letter-spacing: 0.1em;
+  margin-right: 4px;
+}
+
+.opt-btn {
+  background: #16213e;
+  border: 2px solid #0f3460;
+  color: #888;
+  padding: 5px 12px;
+  font-size: 0.8em;
+  font-family: inherit;
+  cursor: pointer;
+  letter-spacing: 0.05em;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.opt-btn:hover { border-color: #e94560; }
+.opt-btn.active {
+  background: #e94560;
+  border-color: #e94560;
+  color: #fff;
+}
+
+#score-area {
+  display: flex;
+  gap: 20px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.score-box {
+  background: #16213e;
+  border: 2px solid #0f3460;
+  padding: 8px 20px;
+  text-align: center;
+  min-width: 100px;
+}
+.score-label { font-size: 0.65em; color: #888; letter-spacing: 0.1em; }
+.score-val { font-size: 1.4em; color: #e94560; font-variant-numeric: tabular-nums; }
+
+.score-box.next-box {
+  border-color: #e94560;
+  box-shadow: 0 0 12px #e9456055;
+}
+.next-box .score-val { font-size: 1.8em; color: #fff; }
+.next-box .score-label { color: #ff8fa3; }
+
+.score-box.hidden { display: none; }
+
+#startHint {
+  font-size: 0.85em;
+  color: #e94560;
+  letter-spacing: 0.05em;
+  margin-bottom: 10px;
+  text-align: center;
+  animation: blink 1.2s ease-in-out infinite;
+}
+#startHint.hidden { display: none; }
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+#progress {
+  font-size: 0.8em;
+  color: #888;
+  margin-bottom: 14px;
+  letter-spacing: 0.05em;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+#grid {
+  display: grid;
+  gap: 8px;
+  background: #0f3460;
+  padding: 10px;
+  border-radius: 6px;
+  position: relative;
+}
+
+.cell {
+  background: #16213e;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 900;
+  color: #c9e8e8;
+  cursor: pointer;
+  transition: transform 0.1s, background 0.15s;
+}
+
+.cell.done {
+  background: #0f3460;
+  color: #3a4a70;
+  cursor: default;
+}
+
+.cell.wrong {
+  animation: shake 0.25s;
+  background: #c73652;
+}
+
+.cell.pop {
+  animation: pop 0.15s ease;
+}
+
+@keyframes pop {
+  0%   { transform: scale(1); }
+  50%  { transform: scale(1.25); }
+  100% { transform: scale(1); }
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
+}
+
+#controls {
+  margin-top: 16px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+button {
+  background: #0f3460;
+  border: 2px solid #e94560;
+  color: #eee;
+  padding: 8px 22px;
+  font-size: 0.9em;
+  font-family: inherit;
+  cursor: pointer;
+  letter-spacing: 0.1em;
+  transition: background 0.15s;
+}
+button:hover { background: #e94560; }
+
+#finishBtn.hidden { display: none; }
+#finishBtn:disabled { opacity: 0.4; cursor: default; }
+#finishBtn:disabled:hover { background: #0f3460; }
+
+#hint { font-size: 0.75em; color: #555; margin-top: 10px; text-align: center; white-space: pre-line; }
+
+#toast {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-6px);
+  background: #e94560;
+  color: #fff;
+  padding: 6px 16px;
+  border-radius: 4px;
+  font-size: 0.85em;
+  letter-spacing: 0.05em;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s, transform 0.25s;
+  z-index: 5;
+  white-space: nowrap;
+}
+#toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+#overlay {
+  display: none;
+  position: absolute;
+  inset: 0;
+  background: rgba(10,10,20,0.9);
+  border-radius: 6px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+#overlay.show { display: flex; }
+#overlay-title { font-size: 1.8em; color: #e94560; }
+#overlay-score { font-size: 1em; color: #aaa; text-align: center; line-height: 1.6; white-space: pre-line; }
+#overlay button { font-size: 1em; }
+#shareBtn { border-color: #1da1f2; }
+#shareBtn:hover { background: #1da1f2; }
+</style>
+</head>
+<body>
+
+<button id="muteBtn" onclick="toggleMute()">🔊</button>
+
+<h1>NUM RUSH</h1>
+
+<div id="config-area">
+  <div class="config-group">
+    <span class="config-label">SIZE</span>
+    <button class="opt-btn" data-size="4">4×4</button>
+    <button class="opt-btn" data-size="5">5×5</button>
+    <button class="opt-btn" data-size="6">6×6</button>
+  </div>
+  <div class="config-group">
+    <span class="config-label">MODE</span>
+    <button class="opt-btn" data-mode="normal">通常</button>
+    <button class="opt-btn" data-mode="reverse">逆順</button>
+    <button class="opt-btn" data-mode="even">偶数</button>
+  </div>
+  <div class="config-group">
+    <span class="config-label">PLAY</span>
+    <button class="opt-btn" data-endless="0">1ステージ</button>
+    <button class="opt-btn" data-endless="1">エンドレス</button>
+  </div>
+</div>
+
+<div id="score-area">
+  <div class="score-box next-box">
+    <div class="score-label">NEXT</div>
+    <div class="score-val" id="nextnum">1</div>
+  </div>
+  <div class="score-box">
+    <div class="score-label">TIME</div>
+    <div class="score-val" id="time">0.00</div>
+  </div>
+  <div class="score-box hidden" id="stageBox">
+    <div class="score-label">STAGE</div>
+    <div class="score-val" id="stagenum">0</div>
+  </div>
+  <div class="score-box">
+    <div class="score-label" id="bestLabel">BEST</div>
+    <div class="score-val" id="best">--</div>
+  </div>
+</div>
+
+<div id="startHint">▶ 数字をタップすると自動でタイム計測がスタートします</div>
+
+<div id="progress"></div>
+
+<div id="grid">
+  <div id="toast"></div>
+  <div id="overlay">
+    <div id="overlay-title"></div>
+    <div id="overlay-score"></div>
+    <button onclick="init()">もう一度</button>
+    <button id="shareBtn" onclick="shareToX()">🐦 Xでシェア</button>
+  </div>
+</div>
+
+<div id="controls">
+  <button onclick="init()">NEW GAME</button>
+  <button id="finishBtn" class="hidden" disabled onclick="finishEndless()">FINISH</button>
+</div>
+<div id="hint"></div>
+
+<script>
+const PENALTY = 0.3;
+const CELL_PX = { 4: 76, 5: 62, 6: 50 };
+
+let size, mode, endless, sequence, order, nextIndex, startTime, penalty, timerId, running, best, completed, stagesCleared, misses, totalTaps, shareText;
+let muted = localStorage.getItem('numrush_muted') === '1';
+let audioCtx = null;
+let toastTimer;
+
+function init() {
+  size = parseInt(localStorage.getItem('numrush_size') || '5', 10);
+  mode = localStorage.getItem('numrush_mode') || 'normal';
+  endless = localStorage.getItem('numrush_endless') === '1';
+  syncConfigButtons();
+
+  const total = size * size;
+  order = Array.from({ length: total }, (_, i) => i + 1);
+  shuffle(order);
+  sequence = buildSequence(total, mode);
+  nextIndex = 0;
+  completed = new Set();
+  penalty = 0;
+  running = false;
+  startTime = null;
+  stagesCleared = 0;
+  misses = 0;
+  totalTaps = 0;
+  shareText = '';
+
+  best = parseFloat(localStorage.getItem(bestKey()) || 'NaN');
+  hideOverlay();
+  clearInterval(timerId);
+  document.getElementById('time').textContent = '0.00';
+  document.getElementById('bestLabel').textContent = endless ? 'BEST/STAGE' : 'BEST';
+  document.getElementById('best').textContent = isNaN(best) ? '--' : best.toFixed(2);
+  document.getElementById('hint').textContent = hintText(total, mode);
+  document.getElementById('stageBox').classList.toggle('hidden', !endless);
+  document.getElementById('stagenum').textContent = '0';
+  document.getElementById('startHint').classList.remove('hidden');
+  const finishBtn = document.getElementById('finishBtn');
+  finishBtn.classList.toggle('hidden', !endless);
+  finishBtn.disabled = true;
+  updateNextDisplay();
+  render();
+}
+
+function updateNextDisplay() {
+  const target = sequence[nextIndex];
+  document.getElementById('nextnum').textContent = target !== undefined ? target : '-';
+  document.getElementById('progress').textContent = `${nextIndex} / ${sequence.length} 完了　（範囲: ${sequence[0]} → ${sequence[sequence.length - 1]}）`;
+}
+
+function bestKey() {
+  return `numrush_best_${size}_${mode}_${endless ? 'endless' : 'single'}`;
+}
+
+function buildSequence(total, mode) {
+  if (mode === 'reverse') {
+    return Array.from({ length: total }, (_, i) => total - i);
+  }
+  if (mode === 'even') {
+    const seq = [];
+    for (let n = 2; n <= total; n += 2) seq.push(n);
+    return seq;
+  }
+  return Array.from({ length: total }, (_, i) => i + 1);
+}
+
+function hintText(total, mode) {
+  const auto = '数字をタップすると自動でタイム計測がスタートします';
+  if (mode === 'reverse') return `${total} → 1 の順にタップ（NEXT表示の数字を探そう）\n${auto}\nミスすると+0.3秒のペナルティ`;
+  if (mode === 'even') return `2 → ${total - (total % 2)} の偶数だけを順にタップ（奇数は罠）\n${auto}\nミスすると+0.3秒のペナルティ`;
+  return `1 → ${total} の順にタップ（NEXT表示の数字を探そう）\n${auto}\nミスすると+0.3秒のペナルティ`;
+}
+
+function shuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+}
+
+function render() {
+  const grid = document.getElementById('grid');
+  const overlay = document.getElementById('overlay');
+  const toast = document.getElementById('toast');
+  const cellPx = CELL_PX[size];
+
+  grid.style.gridTemplateColumns = `repeat(${size}, ${cellPx}px)`;
+  grid.style.gridTemplateRows = `repeat(${size}, ${cellPx}px)`;
+  grid.innerHTML = '';
+  grid.appendChild(overlay);
+  grid.appendChild(toast);
+
+  order.forEach(num => {
+    const div = document.createElement('div');
+    div.className = 'cell';
+    div.style.width = cellPx + 'px';
+    div.style.height = cellPx + 'px';
+    div.style.fontSize = Math.round(cellPx * 0.32) + 'px';
+    div.textContent = num;
+    div.dataset.num = num;
+    if (completed.has(num)) div.classList.add('done');
+    grid.appendChild(div);
+  });
+}
+
+function onCellClick(e) {
+  const cell = e.target.closest('.cell');
+  if (!cell || cell.classList.contains('done')) return;
+  const num = parseInt(cell.dataset.num, 10);
+  const target = sequence[nextIndex];
+
+  if (!running) {
+    running = true;
+    startTime = performance.now();
+    timerId = setInterval(updateTime, 30);
+    document.getElementById('startHint').classList.add('hidden');
+  }
+
+  totalTaps++;
+
+  if (num === target) {
+    cell.classList.add('done', 'pop');
+    completed.add(num);
+    playTone(880, 0.08, 'sine');
+    vibrate(20);
+    nextIndex++;
+    if (nextIndex >= sequence.length) {
+      if (endless) {
+        nextStage();
+      } else {
+        finish();
+      }
+    } else {
+      updateNextDisplay();
+    }
+  } else {
+    misses++;
+    penalty += PENALTY;
+    playTone(160, 0.15, 'square');
+    vibrate([40, 30, 40]);
+    cell.classList.remove('wrong');
+    void cell.offsetWidth;
+    cell.classList.add('wrong');
+  }
+}
+
+function updateTime() {
+  const elapsed = (performance.now() - startTime) / 1000 + penalty;
+  document.getElementById('time').textContent = elapsed.toFixed(2);
+}
+
+function accuracyText() {
+  const acc = totalTaps > 0 ? ((totalTaps - misses) / totalTaps) * 100 : 100;
+  return `ミス: ${misses}回 / 正答率: ${acc.toFixed(0)}%`;
+}
+
+function finish() {
+  running = false;
+  clearInterval(timerId);
+  const elapsed = (performance.now() - startTime) / 1000 + penalty;
+  document.getElementById('time').textContent = elapsed.toFixed(2);
+  document.getElementById('nextnum').textContent = '✓';
+  document.getElementById('progress').textContent = `${sequence.length} / ${sequence.length} 完了　（範囲: ${sequence[0]} → ${sequence[sequence.length - 1]}）`;
+  const accLine = accuracyText();
+
+  if (isNaN(best) || elapsed < best) {
+    best = elapsed;
+    localStorage.setItem(bestKey(), best);
+    document.getElementById('best').textContent = best.toFixed(2);
+    shareText = `NUM RUSHで${elapsed.toFixed(2)}秒の自己ベストを更新！`;
+    setTimeout(() => showOverlay('🎉 NEW BEST!', `タイム: ${elapsed.toFixed(2)}秒\n${accLine}`), 200);
+  } else {
+    shareText = `NUM RUSHで${elapsed.toFixed(2)}秒でクリア！（ベスト: ${best.toFixed(2)}秒）`;
+    setTimeout(() => showOverlay('CLEAR!', `タイム: ${elapsed.toFixed(2)}秒\nベスト: ${best.toFixed(2)}秒\n${accLine}`), 200);
+  }
+}
+
+function nextStage() {
+  stagesCleared++;
+  document.getElementById('stagenum').textContent = stagesCleared;
+  document.getElementById('finishBtn').disabled = false;
+  showToast(`STAGE ${stagesCleared} CLEAR!`);
+
+  const total = size * size;
+  order = Array.from({ length: total }, (_, i) => i + 1);
+  shuffle(order);
+  sequence = buildSequence(total, mode);
+  nextIndex = 0;
+  completed = new Set();
+  updateNextDisplay();
+  render();
+}
+
+function showToast(text) {
+  const toast = document.getElementById('toast');
+  toast.textContent = text;
+  toast.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove('show'), 700);
+}
+
+function finishEndless() {
+  if (stagesCleared < 1) return;
+  running = false;
+  clearInterval(timerId);
+  const elapsed = (performance.now() - startTime) / 1000 + penalty;
+  const avg = elapsed / stagesCleared;
+  document.getElementById('time').textContent = elapsed.toFixed(2);
+  const accLine = accuracyText();
+
+  if (isNaN(best) || avg < best) {
+    best = avg;
+    localStorage.setItem(bestKey(), best);
+    document.getElementById('best').textContent = best.toFixed(2);
+    shareText = `NUM RUSH エンドレスモードで${stagesCleared}ステージクリア！平均${avg.toFixed(2)}秒/ステージ`;
+    setTimeout(() => showOverlay('🎉 NEW BEST!', `ステージ数: ${stagesCleared}\n合計タイム: ${elapsed.toFixed(2)}秒\n平均: ${avg.toFixed(2)}秒/ステージ\n${accLine}`), 100);
+  } else {
+    shareText = `NUM RUSH エンドレスモードで${stagesCleared}ステージクリア！平均${avg.toFixed(2)}秒/ステージ`;
+    setTimeout(() => showOverlay('FINISH', `ステージ数: ${stagesCleared}\n合計タイム: ${elapsed.toFixed(2)}秒\n平均: ${avg.toFixed(2)}秒/ステージ\nベスト平均: ${best.toFixed(2)}秒/ステージ\n${accLine}`), 100);
+  }
+}
+
+function showOverlay(title, sub) {
+  document.getElementById('overlay-title').textContent = title;
+  document.getElementById('overlay-score').textContent = sub;
+  document.getElementById('overlay').classList.add('show');
+}
+function hideOverlay() {
+  document.getElementById('overlay').classList.remove('show');
+}
+
+function shareToX() {
+  const text = shareText || 'NUM RUSHで遊んでいます！';
+  const url = 'https://hub-scription.com/numrush/';
+  const intent = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(url)}`;
+  window.open(intent, '_blank', 'noopener,noreferrer');
+}
+
+function ensureAudio() {
+  if (!audioCtx) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (AC) audioCtx = new AC();
+  }
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+}
+
+function playTone(freq, duration, type) {
+  if (muted) return;
+  ensureAudio();
+  if (!audioCtx) return;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = type || 'sine';
+  osc.frequency.value = freq;
+  gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  osc.start();
+  osc.stop(audioCtx.currentTime + duration);
+}
+
+function vibrate(pattern) {
+  if (navigator.vibrate) navigator.vibrate(pattern);
+}
+
+function toggleMute() {
+  muted = !muted;
+  localStorage.setItem('numrush_muted', muted ? '1' : '0');
+  document.getElementById('muteBtn').textContent = muted ? '🔇' : '🔊';
+}
+
+function syncConfigButtons() {
+  document.querySelectorAll('[data-size]').forEach(btn => {
+    btn.classList.toggle('active', parseInt(btn.dataset.size, 10) === size);
+  });
+  document.querySelectorAll('[data-mode]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.mode === mode);
+  });
+  document.querySelectorAll('[data-endless]').forEach(btn => {
+    btn.classList.toggle('active', (btn.dataset.endless === '1') === endless);
+  });
+}
+
+document.querySelectorAll('[data-size]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    localStorage.setItem('numrush_size', btn.dataset.size);
+    init();
+  });
+});
+document.querySelectorAll('[data-mode]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    localStorage.setItem('numrush_mode', btn.dataset.mode);
+    init();
+  });
+});
+document.querySelectorAll('[data-endless]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    localStorage.setItem('numrush_endless', btn.dataset.endless);
+    init();
+  });
+});
+document.getElementById('grid').addEventListener('click', onCellClick);
+document.getElementById('muteBtn').textContent = muted ? '🔇' : '🔊';
+
+init();
+</script>
+</body>
+</html>
